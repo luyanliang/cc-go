@@ -39,6 +39,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_riverpod: ^3.5.0
   flutter_secure_storage: ^11.2.0
+  flutter_local_notifications: ^23.0.2
+  flutter_foreground_task: ^11.0.3
+  rxdart: ^0.28.0
 
 dev_dependencies:
   flutter_test:

@@ -10,6 +10,7 @@ import '../state/providers.dart';
 import '../state/session_models.dart';
 import '../state/sessions.dart';
 import '../transport/reconnecting_link.dart';
+import '../state/app_link.dart';
 import '../state/app_link_provider.dart';
 import 'chat/chat_screen.dart';
 import 'debug_events_screen.dart';
@@ -53,24 +54,58 @@ class SessionListScreen extends ConsumerWidget {
         icon: const Icon(Icons.add),
         label: const Text('新建会话'),
       ),
-      body: sessions.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('会话列表加载失败：$error')),
-        data: (list) {
-          if (list.isEmpty) {
-            return const Center(child: Text('还没有会话\n点右下角新建', textAlign: TextAlign.center));
-          }
-          return RefreshIndicator(
-            onRefresh: () => ref.read(sessionsProvider.notifier).refresh(),
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              itemCount: list.length,
-              separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
-              itemBuilder: (context, index) =>
-                  _SessionTile(session: list[index]),
+      body: Column(
+        children: [
+          // 断线状态明示（task 8.4）：重连期间横幅常驻，恢复即消失。
+          if (appLink.hasValue)
+            StreamBuilder<LinkState>(
+              stream: (appLink.value as AppLink).link.states,
+              builder: (context, snapshot) {
+                if (snapshot.data == LinkState.connected) {
+                  return const SizedBox.shrink();
+                }
+                return Container(
+                  width: double.infinity,
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.cloud_off_outlined, size: 16, color: Colors.orange),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '未连接电脑，正在重试…',
+                          style: TextStyle(color: Colors.orange, fontSize: 13),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
-          );
-        },
+          Expanded(
+            child: sessions.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, _) => Center(child: Text('会话列表加载失败：$error')),
+              data: (list) {
+                if (list.isEmpty) {
+                  return const Center(
+                      child: Text('还没有会话\n点右下角新建', textAlign: TextAlign.center));
+                }
+                return RefreshIndicator(
+                  onRefresh: () => ref.read(sessionsProvider.notifier).refresh(),
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: list.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
+                    itemBuilder: (context, index) => _SessionTile(session: list[index]),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

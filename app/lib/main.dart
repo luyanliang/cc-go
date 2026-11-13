@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'state/providers.dart';
+import 'ui/lifecycle_host.dart';
 import 'ui/pair_screen.dart';
 import 'ui/session_list_screen.dart';
 
@@ -14,10 +15,13 @@ class CcGoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'cc-go',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo)),
-      home: const RootGate(),
+    return LifecycleHost(
+      child: MaterialApp(
+        title: 'cc-go',
+        navigatorKey: rootNavigatorKey,
+        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo)),
+        home: const RootGate(),
+      ),
     );
   }
 }

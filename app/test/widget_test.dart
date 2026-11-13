@@ -5,6 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cc_go/main.dart';
+import 'package:cc_go/notify/app_notifier.dart';
+import 'package:cc_go/notify/foreground_link.dart';
+import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
 import 'package:cc_go/state/app_link_provider.dart';
 import 'package:cc_go/state/credentials.dart';
@@ -81,6 +84,8 @@ class Harness {
     return ProviderScope(
       overrides: [
         credentialStoreProvider.overrideWithValue(store),
+        appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
+        foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
         appLinkFactoryProvider.overrideWithValue(
           (creds) => AppLink.custom(creds, () async => fake),
         ),
@@ -110,12 +115,45 @@ Map<String, dynamic> sessionJson(
   };
 }
 
+
+class _FakeAppNotifier extends AppNotifier {
+  final tapsController = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get taps => tapsController.stream;
+
+  @override
+  Future<void> ensureInitialized() async {}
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<void> show(NotifyIntent intent) async {}
+
+  @override
+  Future<String?> launchPayload() async => null;
+}
+
+class _FakeForegroundLink extends ForegroundLink {
+  @override
+  Future<void> start(String hostName) async {}
+
+  @override
+  Future<void> update({required bool connected, required String hostName}) async {}
+
+  @override
+  Future<void> stop() async {}
+}
+
 void main() {
   testWidgets('未配对：显示配对屏表单', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           credentialStoreProvider.overrideWithValue(MemoryCredentialStore()),
+          appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
+          foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
         ],
         child: const CcGoApp(),
       ),
@@ -158,6 +196,8 @@ void main() {
     final h = Harness()..fake.sessions = [sessionJson('s0', '旧会话', 'idle', 5)];
     await tester.pumpWidget(h.boot());
     await tester.pumpAndSettle();
+    expect(find.text('未连接电脑，正在重试…'), findsNothing,
+        reason: '已连接时无断线横幅');
     expect(find.text('旧会话'), findsOneWidget);
     expect(find.text('新来的'), findsNothing);
 

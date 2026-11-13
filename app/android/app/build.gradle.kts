@@ -6,10 +6,13 @@ plugins {
 
 android {
     namespace = "dev.luke.cc_go"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_local_notifications v23 需要 37+（flutter.compileSdkVersion 目前是 36）
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // flutter_local_notifications 需要 core library desugaring
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -36,6 +39,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
 
 kotlin {

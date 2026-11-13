@@ -6,6 +6,7 @@ daemon/dist/
 app/build/
 app/.dart_tool/
 app/android/.gradle/
+app/android/.kotlin/
 app/android/local.properties
 *.apk
 *.aab

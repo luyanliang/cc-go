@@ -13,6 +13,7 @@ library;
 import 'dart:async';
 
 import 'package:meta/meta.dart';
+import 'package:rxdart/rxdart.dart';
 
 import 'host_link.dart';
 
@@ -33,19 +34,15 @@ class ReconnectingHostLink {
   final Duration baseDelay;
   final Duration maxDelay;
 
-  // 新订阅者立即收到当前状态（晚订阅的 UI 不该永远停在 connecting）。
-  late final StreamController<LinkState> _states = StreamController<LinkState>.broadcast(
-    onListen: () {
-      if (_lastState != null && !_states.isClosed) _states.add(_lastState!);
-    },
-  );
+  // BehaviorSubject：每个新订阅者立即收到当前状态（晚订阅的 UI——
+  // 断线横幅、连接角标、生命周期接线——都不该错过最新值）。
+  final _states = BehaviorSubject<LinkState>.seeded(LinkState.connecting);
   final _events = StreamController<DaemonEvent>.broadcast();
   final _watchedSessionIds = <String>{};
 
   HostLinkBase? _current;
   StreamSubscription<DaemonEvent>? _currentSubscription;
   Completer<void>? _dropped;
-  LinkState? _lastState;
   var _attempt = 0;
   var _stopped = false;
 
@@ -56,7 +53,7 @@ class ReconnectingHostLink {
   /// Daemon events, merged across reconnects.
   Stream<DaemonEvent> get events => _events.stream;
 
-  LinkState get state => _lastState ?? LinkState.connecting;
+  LinkState get state => _states.value;
 
   /// Session ids to (re-)watch; snapshots arriving as `session` events on
   /// [events] refresh the transcript after every reconnect.
@@ -184,7 +181,6 @@ class ReconnectingHostLink {
   }
 
   void _setState(LinkState state) {
-    _lastState = state;
     if (!_states.isClosed) _states.add(state);
   }
 

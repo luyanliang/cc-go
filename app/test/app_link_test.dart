@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cc_go/main.dart';
+import 'package:cc_go/notify/app_notifier.dart';
+import 'package:cc_go/notify/foreground_link.dart';
+import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
 import 'package:cc_go/state/app_link_provider.dart';
 import 'package:cc_go/state/credentials.dart';
@@ -23,6 +26,37 @@ class _FakeLink implements HostLinkBase {
   Future<void> close({String reason = ''}) async => eventsController.close();
 }
 
+
+class _FakeAppNotifier extends AppNotifier {
+  final tapsController = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get taps => tapsController.stream;
+
+  @override
+  Future<void> ensureInitialized() async {}
+
+  @override
+  Future<bool> requestPermission() async => true;
+
+  @override
+  Future<void> show(NotifyIntent intent) async {}
+
+  @override
+  Future<String?> launchPayload() async => null;
+}
+
+class _FakeForegroundLink extends ForegroundLink {
+  @override
+  Future<void> start(String hostName) async {}
+
+  @override
+  Future<void> update({required bool connected, required String hostName}) async {}
+
+  @override
+  Future<void> stop() async {}
+}
+
 void main() {
   group('AppLink token-invalid flow (task 4.3)', () {
     testWidgets('token 被拒 → 清凭据 → 路由回配对屏', (tester) async {
@@ -39,6 +73,8 @@ void main() {
         ProviderScope(
           overrides: [
             credentialStoreProvider.overrideWithValue(store),
+            appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
+            foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
             appLinkFactoryProvider.overrideWithValue((creds) {
               return AppLink.custom(creds, () async {
                 throw const TokenInvalidException();
