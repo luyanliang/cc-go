@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-CC-Go lets a phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over LAN WebSocket (or an SSH tunnel), then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI.
+CC-Go lets an Android phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over TLS WebSocket, then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI. The SSH tunnel is planned for M4.
 
-- `daemon/` — the PC side (Node.js/TypeScript). All working code lives here today (milestone M1).
-- `app/` — the phone side (Flutter, Android first). M2 skeleton in place: `flutter create` project (`dev.luke.cc_go`, minSdk 26, Android-only platform).
+- `daemon/` — the PC side (Node.js/TypeScript): pairing, TLS, authenticated WebSocket, session management.
+- `app/` — the Android client (Flutter, `dev.luke.cc_go`, minSdk 26): pairing, sessions, chat, permission UI, reconnect, and notification implementation. Background behavior still needs the device checks in `docs/VERIFICATION.md`.
 - `reference/` — **read-only** third-party codebases kept for pattern reference: `dsh-Go` (Flutter chat-UI patterns) and `happy-main` (happy-cli — driving Claude Code via the Agent SDK). `docs/ARCHITECTURE.md` maps which techniques come from which project.
 - `docs/ARCHITECTURE.md` (written in Chinese) — authoritative design doc: architecture diagram, confirmed decisions, milestones M1–M4.
-- `openspec/` — spec-driven change management via the `openspec-*` skills.
+- `openspec/` — spec-driven change management via the `openspec-*` skills. The task checkboxes are the acceptance record; do not check an item merely because code exists.
+- `README.md` — setup and normal development entry point. `docs/VERIFICATION.md` — device acceptance steps.
 
 ## Commands
 
@@ -18,11 +19,11 @@ All daemon commands run from `daemon/`:
 
 ```bash
 cd daemon
-npm install
+npm ci
 npm run build        # tsc → dist/
 npm run dev          # tsx watch src/index.ts
 npm run typecheck    # tsc --noEmit
-npm test             # vitest run — unit tests live in test/*.test.ts (currently tls.ts coverage)
+npm test             # vitest run — unit and local HTTP/WebSocket boundary tests
 ```
 
 ### Running the daemon
@@ -31,7 +32,7 @@ npm test             # vitest run — unit tests live in test/*.test.ts (current
 node bin/cc-go.mjs [--port 8747] [--localhost] [--name <name>] [--code <code>] [--no-tls]
 ```
 
-- All endpoints (HTTP + WebSocket) are served over **TLS by default** (`https`/`wss`): a self-signed ECDSA P-256 certificate is generated on first run into `~/.cc-go/tls-{cert,key}..pem` and reused forever. Startup prints its SHA-256 fingerprint next to the pairing code — clients pin it on first connection (TOFU) and fail closed if it changes.
+- All endpoints (HTTP + WebSocket) are served over **TLS by default** (`https`/`wss`): a self-signed ECDSA P-256 certificate is generated on first run into `~/.cc-go/tls-{cert,key}.pem` and reused. Startup prints its SHA-256 fingerprint next to the pairing code — clients pin it on first connection (TOFU) and fail closed if it changes.
 - `--localhost` binds 127.0.0.1 (SSH-tunnel mode); default binds 0.0.0.0. `--no-tls` is a plaintext dev mode that forces loopback binding.
 - Requires the `claude` CLI on PATH and authenticated — the Agent SDK spawns it for every session.
 
@@ -49,14 +50,17 @@ The smoke client pairs over HTTPS, opens the WebSocket, and exercises: Q&A turn 
 
 ```bash
 cd app
+flutter pub get              # first run or dependency changes
 flutter analyze               # zero warnings required
+flutter test
 flutter run                   # needs a device visible in adb devices
 flutter build apk --debug     # → build/app/outputs/flutter-apk/app-debug.apk
 flutter build apk --release   # signed with the debug keystore (personal sideload, design D6)
 ```
 
-- Toolchain is user-level under `~/development/` (Flutter 3.50.0, JDK17, Android SDK); PATH + China mirrors (`storage.flutter-io.cn` for Flutter artifacts, Tencent mirror for Gradle) are configured in `~/.profile` — do not point the Gradle wrapper back at `services.gradle.org` (slow + corrupts on this network).
+- The project targets Flutter 3.50.0, JDK 17 and an Android SDK. For networks that cannot reach pub.dev, use the mirror command in `README.md` when installing dependencies. CI uses the default package source.
 - Android: `applicationId dev.luke.cc_go`, minSdk 26, Android is the only platform.
+- Full repository check: `bash scripts/check.sh --setup` on first use, then `bash scripts/check.sh`. CI uses the same command. Node and Flutter versions are pinned in `.node-version` and `.fvmrc`.
 
 ## Daemon architecture
 

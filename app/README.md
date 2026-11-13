@@ -1,17 +1,13 @@
-# cc_go
+# Android App
 
-Remote control for Claude Code on your PC
+本目录是 cc-go 的 Flutter 手机端。环境准备、检查命令和运行方式见[项目 README](../README.md)。手机端当前覆盖配对、会话列表、聊天、权限应答，以及保活和通知的实现；后台与公网行为的验收状态以 [OpenSpec 任务](../openspec/changes/phone-app-mvp/tasks.md)为准。
 
-## Getting Started
+单独检查手机端：
 
-This project is a starting point for a Flutter application.
+```bash
+flutter pub get
+flutter analyze --no-pub
+flutter test --no-pub
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+真机安装及后台验收步骤见[验证文档](../docs/VERIFICATION.md)。

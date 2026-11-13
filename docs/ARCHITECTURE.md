@@ -102,6 +102,8 @@ cc-go/
 
 ## 里程碑
 
+当前实施与验收状态以 [OpenSpec 任务清单](../openspec/changes/phone-app-mvp/tasks.md)为准。M1 和手机端主要交互已有实现；第 8 节后台保活、通知及第 9 节公网全链路仍需按[真机验收步骤](VERIFICATION.md)验证。下列里程碑描述的是规划范围，不代表全部已验收。
+
 1. **M1 daemon MVP**：Agent SDK 包装（建会话/发消息/流式事件/权限/cancel）+ WS 协议 + 配对码；命令行测试客户端跑通全流程。
 2. **M2 APP 骨架**：Flutter 工程 + 主机管理（扫码/配对）+ 会话列表 + 聊天 UI（Markdown/工具行/输入条）。
 3. **M3 完整交互**：会话接管（快照+续播）、权限卡片、steer/queue、打断、通知。
