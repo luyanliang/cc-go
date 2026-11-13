@@ -174,13 +174,34 @@ void main() {
       await wrapped.stop();
     });
 
-    test('call throws while disconnected instead of hanging', () async {
+    test('call waits for connect, then fails with HostLinkClosed', () async {
       final wrapped = ReconnectingHostLink(
         connector: () async => throw const HostLinkClosed('refused'),
         baseDelay: const Duration(milliseconds: 5),
       );
       await wrapped.start();
-      expect(wrapped.call('host.info'), throwsA(isA<HostLinkClosed>()));
+      // 连接建立前调用：等待窗口内仍未连上 → HostLinkClosed（不悬挂）
+      final outcome = await wrapped
+          .call('host.info', const {}, const Duration(milliseconds: 200))
+          .then<Object>((v) => v, onError: (Object e) => e);
+      expect(outcome, isA<HostLinkClosed>());
+      await wrapped.stop();
+    });
+
+    test('call issued while connecting rides the first connection', () async {
+      final links = <FakeLink>[];
+      final wrapped = ReconnectingHostLink(
+        connector: () async {
+          final link = FakeLink('l${links.length}');
+          links.add(link);
+          return link;
+        },
+        baseDelay: const Duration(milliseconds: 1),
+      );
+      await wrapped.start();
+      final result = await wrapped.call('host.info', const {}, const Duration(seconds: 2))
+          as Map<String, dynamic>;
+      expect(result['method'], 'host.info');
       await wrapped.stop();
     });
 

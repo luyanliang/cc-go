@@ -30,8 +30,13 @@ export class SessionManager {
   }
 
   list(): SessionSummary[] {
-    const live = [...this.sessions.values()].map((s) => s.summary())
-    return live.sort((a, b) => b.updatedAt - a.updatedAt)
+    // Live sessions win over their persisted summaries; cold (persisted but
+    // not rehydrated) sessions stay listed after a daemon restart — the phone
+    // must see every session the daemon manages, not just live ones.
+    const byId = new Map<string, SessionSummary>()
+    for (const summary of this.store.listSessions()) byId.set(summary.id, summary)
+    for (const session of this.sessions.values()) byId.set(session.id, session.summary())
+    return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
   get(id: string): Session | undefined {

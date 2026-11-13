@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- daemon 连接走 TLS WebSocket，release 包必须显式声明（模板只在
+         debug/profile manifest 里给） -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="cc_go"
+        android:label="cc-go"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

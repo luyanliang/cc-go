@@ -20,7 +20,7 @@ class TranscriptListView extends StatelessWidget {
   final List<String> queuedTexts;
   final bool loaded;
   final ScrollController scrollController;
-  final void Function(String itemId, bool allow, bool allowToolForSession)?
+  final Future<void> Function(String itemId, bool allow, bool allowToolForSession)?
       onRespondPermission;
 
   @override
@@ -61,7 +61,7 @@ class PermissionCard extends StatefulWidget {
   const PermissionCard({super.key, required this.item, this.onRespond});
 
   final TranscriptItem item;
-  final void Function(String itemId, bool allow, bool allowToolForSession)?
+  final Future<void> Function(String itemId, bool allow, bool allowToolForSession)?
       onRespond;
 
   @override
@@ -72,10 +72,17 @@ class _PermissionCardState extends State<PermissionCard> {
   bool _allowForSession = false;
   bool _busy = false;
 
-  void _respond(bool allow) {
+  Future<void> _respond(bool allow) async {
     if (_busy) return;
     setState(() => _busy = true);
-    widget.onRespond?.call(widget.item.id, allow, _allowForSession);
+    try {
+      await widget.onRespond?.call(widget.item.id, allow, _allowForSession);
+    } on Object {
+      // 应答没送达（掉线/超时）——重新启用按钮允许重试；条目状态未变，
+      // 卡片依旧是 awaiting-permission。
+      if (mounted) setState(() => _busy = false);
+      rethrow;
+    }
   }
 
   @override

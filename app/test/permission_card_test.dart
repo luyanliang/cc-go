@@ -16,7 +16,7 @@ TranscriptItem toolItem(String status) => TranscriptItem(
       },
     );
 
-Widget harness(TranscriptItem item, void Function(String, bool, bool) onRespond) {
+Widget harness(TranscriptItem item, Future<void> Function(String, bool, bool) onRespond) {
   return MaterialApp(
     home: Scaffold(
       body: TranscriptListView(
@@ -32,7 +32,7 @@ Widget harness(TranscriptItem item, void Function(String, bool, bool) onRespond)
 
 void main() {
   testWidgets('awaiting-permission 工具条目渲染为权限卡片（7.1）', (tester) async {
-    await tester.pumpWidget(harness(toolItem('awaiting-permission'), (_, _, _) {}));
+    await tester.pumpWidget(harness(toolItem('awaiting-permission'), (id, a, f) async {}));
     expect(find.text('请求权限：Write'), findsOneWidget);
     expect(find.textContaining('/tmp/perm/a.txt'), findsOneWidget,
         reason: '等宽参数展示');
@@ -46,7 +46,7 @@ void main() {
     bool? allow;
     bool? forSession;
     await tester.pumpWidget(harness(toolItem('awaiting-permission'),
-        (id, a, f) => (itemId, allow, forSession) = (id, a, f)));
+        (id, a, f) async => (itemId, allow, forSession) = (id, a, f)));
     await tester.tap(find.text('允许'));
     expect(itemId, 't1');
     expect(allow, isTrue);
@@ -57,7 +57,7 @@ void main() {
     bool? allow;
     bool? forSession;
     await tester.pumpWidget(harness(toolItem('awaiting-permission'),
-        (id, a, f) => (allow, forSession) = (a, f)));
+        (id, a, f) async => (allow, forSession) = (a, f)));
     await tester.tap(find.text('本次会话不再询问此类工具'));
     await tester.pump();
     await tester.tap(find.text('拒绝'));
@@ -66,11 +66,11 @@ void main() {
   });
 
   testWidgets('应答后状态翻转 → 卡片消失，回到工具行（7.2）', (tester) async {
-    await tester.pumpWidget(harness(toolItem('running'), (_, _, _) {}));
+    await tester.pumpWidget(harness(toolItem('running'), (id, a, f) async {}));
     expect(find.text('请求权限：Write'), findsNothing, reason: '卡片消失');
     expect(find.text('Write · 运行中'), findsOneWidget);
 
-    await tester.pumpWidget(harness(toolItem('denied'), (_, _, _) {}));
+    await tester.pumpWidget(harness(toolItem('denied'), (id, a, f) async {}));
     expect(find.text('Write · 已拒绝'), findsOneWidget);
   });
 }

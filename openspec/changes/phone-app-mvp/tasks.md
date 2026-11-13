@@ -12,7 +12,7 @@
 
 - [x] 2.1 安装 Flutter SDK + Android cmdline-tools + JDK17，`flutter doctor --android-licenses` 全绿；验证：`flutter doctor` 无阻断项
 - [x] 2.2 `flutter create` 建立 `app/` 工程（org、Android min SDK），`flutter analyze` 通过；验证：仓库内 analyze 零告警
-- [ ] 2.3 构建 debug APK 并安装到真机；验证：手机上出现 cc-go 图标且能打开空壳页
+- [x] 2.3 构建 debug APK 并安装到真机；验证：手机上出现 cc-go 图标且能打开空壳页
 - [x] 2.4 在 `CLAUDE.md` 补充 app 侧构建/运行命令；验证：按文档命令能复现 APK 构建
 
 ## 3. HostLink Dart 客户端（transport 层）
@@ -20,12 +20,12 @@
 - [x] 3.1 实现 WS 连接 + JSON-RPC 请求/响应 + 事件流（翻译 `smoke-client.mjs` 为 `lib/transport/host_link.dart`）；验证：单元测试覆盖帧编解码与请求配对
 - [x] 3.2 实现 TLS TOFU：`badCertificateCallback` 指纹比对、首连记录、不匹配拒连、忘记主机清除；验证：对 1.x 的 daemon 真机连通，篡改指纹的测试用例拒连
 - [x] 3.3 实现指数退避重连与重连后自动 `hello` + 重订阅补快照；验证：杀 daemon 再启动，客户端自动恢复且转录补齐
-- [ ] 3.4 加"原始事件调试页"临时入口，展示收到的全部事件帧；验证：真机上可见配对/会话/权限事件实时滚动
+- [x] 3.4 加"原始事件调试页"临时入口，展示收到的全部事件帧；验证：真机上可见配对/会话/权限事件实时滚动
 
 ## 4. 配对屏与凭据持久化
 
 - [x] 4.1 配对屏 UI：地址/端口/配对码输入与提交、错误反馈（码错/网络不通）；验证：错误码与不通两种场景均给出可理解提示
-- [ ] 4.2 token + 指纹写入 secure storage，App 重启免配对直达会话列表；验证：杀进程重开不要求重新配对
+- [x] 4.2 token + 指纹写入 secure storage，App 重启免配对直达会话列表；验证：杀进程重开不要求重新配对
 - [x] 4.3 token 失效（daemon 重置/解绑）时引导重新配对；验证：删除 daemon 端设备记录后 App 收到引导而非死循环报错
 
 ## 5. 会话列表
@@ -56,5 +56,5 @@
 ## 9. 端到端验收与发布
 
 - [ ] 9.1 公网真机全流程演练：配对 → 新建 → 发任务 → 后台收权限通知 → 应答 → 轮次结束通知 → 断网重连；验证：全链路无人工干预恢复，`--fingerprint` 冒烟同步通过
-- [ ] 9.2 `flutter build apk --release` 产出可安装 APK 并真机安装验证；验证：release 包完成一次全新配对
+- [x] 9.2 `flutter build apk --release` 产出可安装 APK 并真机安装验证；验证：release 包完成一次全新配对
 - [ ] 9.3 收尾文档：`CLAUDE.md`/`docs/ARCHITECTURE.md` 与实现一致；验证：按文档从零构建出同样行为

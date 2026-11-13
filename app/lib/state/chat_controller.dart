@@ -110,10 +110,16 @@ class ChatController {
     });
   }
 
-  /// 打断当前轮（未决权限由 daemon 一并拒绝）。
+  /// 打断当前轮（未决权限由 daemon 一并拒绝）。先清本地排队显示——
+  /// 用户意图是立即停止；RPC 失败（掉线）不上抛，离线状态另有呈现。
   Future<void> cancel() async {
+    clearQueued();
     if (link == null) return;
-    await link!.call('session.cancel', {'sessionId': sessionId});
+    try {
+      await link!.call('session.cancel', {'sessionId': sessionId});
+    } on Object {
+      // 掉线时打断送不出去；重连后 phase 快照会带回真实状态。
+    }
   }
 
   /// 应答权限请求（task 7.1）：允许/拒绝，可勾选本会话同类工具免问。

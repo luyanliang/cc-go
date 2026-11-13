@@ -92,15 +92,39 @@ class ReconnectingHostLink {
 
   void unwatch(String sessionId) => _watchedSessionIds.remove(sessionId);
 
-  /// Runs a call on the live link; throws [HostLinkClosed] while down (the
-  /// caller decides whether to retry — reconnects are automatic, call
-  /// re-sends are not, so nothing is silently swallowed).
-  Future<dynamic> call(String method, [Map<String, dynamic> params = const {}]) {
-    final link = _current;
+  /// Runs a call on the live link.
+  ///
+  /// While a (re)connect is still pending, waits for it up to
+  /// [connectTimeout] instead of failing immediately — callers race the
+  /// connection all the time (list refresh right after pairing). If the
+  /// wait lapses, throws [HostLinkClosed].
+  Future<dynamic> call(
+    String method, [
+    Map<String, dynamic> params = const {},
+    Duration? connectTimeout,
+  ]) async {
+    var link = _current;
     if (link == null) {
-      return Future.error(const HostLinkClosed('reconnecting'));
+      await untilConnected(timeout: connectTimeout ?? const Duration(seconds: 15));
+      link = _current;
+      if (link == null) {
+        // Connected and dropped again in the same breath.
+        throw const HostLinkClosed('reconnecting');
+      }
     }
     return link.call(method, params);
+  }
+
+  /// Resolves once connected; throws [HostLinkClosed] if [timeout] lapses.
+  /// Single source of truth for "wait for the link" (used by [call] and the
+  /// tool scripts — don't hand-roll `states.firstWhere` copies).
+  Future<void> untilConnected({Duration timeout = const Duration(seconds: 15)}) async {
+    if (_current != null) return;
+    try {
+      await states.firstWhere((s) => s == LinkState.connected).timeout(timeout);
+    } on Object {
+      throw const HostLinkClosed('not connected in time');
+    }
   }
 
   /// Starts the connect/reconnect loop. Must not be called twice.
