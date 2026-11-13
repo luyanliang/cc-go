@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 CC-Go lets a phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over LAN WebSocket (or an SSH tunnel), then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI.
 
 - `daemon/` — the PC side (Node.js/TypeScript). All working code lives here today (milestone M1).
-- `app/` — the phone side (Flutter, Android first). M2 skeleton in place: `flutter create` project (`dev.luke.cc_go`, minSdk 26, Android-only platform).
+- `app/` — the phone side (Flutter, Android only, `dev.luke.cc_go`). Implemented: pairing (host/port/6-digit code → device token + cert fingerprint in secure storage), session list, chat transcript (user/assistant/tool/notice items, queue-mode send, interrupt), inline permission cards, background keep-alive (foreground service + local notifications), auto-reconnect with snapshot resync.
 - `reference/` — **read-only** third-party codebases kept for pattern reference: `dsh-Go` (Flutter chat-UI patterns) and `happy-main` (happy-cli — driving Claude Code via the Agent SDK). `docs/ARCHITECTURE.md` maps which techniques come from which project.
 - `docs/ARCHITECTURE.md` (written in Chinese) — authoritative design doc: architecture diagram, confirmed decisions, milestones M1–M4.
 - `openspec/` — spec-driven change management via the `openspec-*` skills.
@@ -73,6 +73,16 @@ Four layers, one direction of dependency: `server.ts` → `agent/manager.ts` →
   - Sets `CLAUDE_CODE_ENTRYPOINT=cc-go` so daemon sessions stay visible in `claude --resume`.
 - **`src/store.ts`** — single `~/.cc-go/store.json` (atomic tmp+rename, mode 0600): daemon id/name, paired device tokens, session summaries.
 - **`src/tls.ts`** — self-signed certificate lifecycle: generated on first run (`selfsigned`, ECDSA P-256), persisted in `~/.cc-go/`, reused across restarts; exposes the openssl-style SHA-256 fingerprint clients pin (TOFU).
+
+## App architecture
+
+Pure-Dart cores, Flutter only at the edges — transport and state logic run (and are tested) headless. One `HostLink` connection under everything.
+
+- **`lib/transport/`** — `host_link.dart` is the `smoke-client.mjs` logic as a Dart client: JSON-RPC request/response pairing over one WebSocket plus a typed event stream; `tofu.dart` pins the daemon cert's SHA-256 (first connection records it, mismatch refuses the connection, "forget host" clears it); `reconnecting_link.dart` adds exponential-backoff reconnect and replays `hello` + watch subscriptions afterwards, exposing link state as a `BehaviorSubject` (new subscribers immediately get the current value).
+- **`lib/state/`** — Riverpod providers: credentials (`secure_credential_store.dart` on `flutter_secure_storage`), pairing, session list, `chat_controller` + `transcript` (snapshot + live events merged idempotently by item id, matching the daemon's whole-item `item.updated` semantics).
+- **`lib/notify/`** — `foreground_link.dart` runs `flutter_foreground_task` to hold the connection open with an honest persistent status notification; `app_notifier.dart` posts high-priority permission-request notifications and turn-finished alerts via `flutter_local_notifications` (tap deep-links into the session); `notification_policy.dart` is the pure decision layer (foreground suppression, running→idle edge detection, title cache) so triggers are unit-testable without plugins.
+- **`lib/ui/`** — `pair_screen` / `session_list_screen` / `chat/` (screen + rows + composer) / `debug_events_screen` (raw event firehose, temporary) / `lifecycle_host.dart` — a dumb widget at the app root wiring it together: lifecycle → notification suppression, events → policy → notifications, notification taps → navigation, foreground-service start/stop, and the one-time skippable battery-optimization exemption prompt.
+- **Android side** — manifest declares `FOREGROUND_SERVICE_DATA_SYNC` + `POST_NOTIFICATIONS`; `MainActivity.kt` exposes a MethodChannel to open the battery-optimization exemption settings; compileSdk 37 with core library desugaring (required by `flutter_local_notifications`).
 
 ## Conventions
 

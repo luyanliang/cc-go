@@ -78,31 +78,36 @@ Happy 模式：`canUseTool` 回调挂起 Promise → 手机渲染权限卡片（
   - **centered-anchor 列表**：解决流式输出 + 历史加载的滚动跳动（dsh-Go 教科书级实现，见 `app/lib/ui/chat/chat_list.dart`）。
 - **主题**：亮/暗双色，层次靠材质（模糊+细线）不靠阴影，OKLCH 色彩。
 
+> 当前实现为最简可用版：状态管理（Riverpod `autoDispose.family`）、工具行折叠、权限卡片、断线重连已落地；Markdown/代码高亮、会话抽屉、centered-anchor 列表、主题系统等 UI 精修项按 proposal 明确推迟（见 M4）。
+
 ## 目录规划
 
 ```
 cc-go/
 ├── daemon/          # 电脑端（Node/TS）：cc-go daemon
 │   ├── src/
-│   │   ├── server/      # WS 服务、鉴权、配对
-│   │   ├── agent/       # Agent SDK 包装：会话、权限、事件转换
-│   │   ├── protocol/    # 消息 schema（Zod）与序列化
-│   │   └── index.ts     # CLI 入口（cc-go / cc-go daemon）
-│   └── package.json
-├── app/             # 手机端（Flutter，Android 先行）
+│   │   ├── server.ts    # https/wss 服务、鉴权、配对、事件路由
+│   │   ├── agent/       # Agent SDK 包装：manager + session（会话、权限、事件转换）
+│   │   ├── protocol.ts  # 消息 schema（Zod）
+│   │   ├── store.ts     # ~/.cc-go/store.json（设备 token / 会话摘要）
+│   │   ├── tls.ts       # 自签证书生命周期与指纹
+│   │   └── index.ts     # CLI 入口
+│   └── test/            # 单测 + smoke-client.mjs（含 TOFU）
+├── app/             # 手机端（Flutter，Android）
 │   ├── lib/
-│   │   ├── transport/   # HostLink: direct_ws / ssh_tunnel
-│   │   ├── state/       # Riverpod providers
-│   │   ├── ui/          # shell / chat / sessions / hosts / settings
-│   │   └── theme/
-│   └── pubspec.yaml
+│   │   ├── transport/   # HostLink: host_link / reconnecting_link / tofu（纯 Dart）
+│   │   ├── state/       # Riverpod providers、transcript 快照合并
+│   │   ├── notify/      # 前台服务 + 本地通知 + NotificationPolicy
+│   │   └── ui/          # pair / session_list / chat / lifecycle_host / debug_events
+│   └── test/            # 每层对应 *_test.dart
 ├── docs/
+├── openspec/
 └── reference/       # 参考项目（只读）
 ```
 
 ## 里程碑
 
-1. **M1 daemon MVP**：Agent SDK 包装（建会话/发消息/流式事件/权限/cancel）+ WS 协议 + 配对码；命令行测试客户端跑通全流程。
-2. **M2 APP 骨架**：Flutter 工程 + 主机管理（扫码/配对）+ 会话列表 + 聊天 UI（Markdown/工具行/输入条）。
-3. **M3 完整交互**：会话接管（快照+续播）、权限卡片、steer/queue、打断、通知。
-4. **M4 SSH 隧道**：dartssh2 direct-tcpip 转发传输层；mDNS 发现；打磨与发布打包。
+1. **M1 daemon MVP** ✅：Agent SDK 包装（建会话/发消息/流式事件/权限/cancel）+ WS 协议 + 配对码 + TLS/TOFU；命令行测试客户端跑通全流程。
+2. **M2 APP 骨架** ✅：Flutter 工程 + 配对（配对码，扫码留待 M4）+ 会话列表 + 聊天 UI（工具行/输入条）。
+3. **M3 完整交互** ✅（steer 插话留待后续）：会话接管（快照+续播）、权限卡片、queue、打断、后台保活与本地通知、断线重连；release APK 真机可用。
+4. **M4 SSH 隧道**（未开始）：dartssh2 direct-tcpip 转发传输层；mDNS 发现；扫码配对；Markdown/代码高亮等 UI 精修；打磨与发布打包。
