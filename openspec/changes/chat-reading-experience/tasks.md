@@ -35,4 +35,4 @@
 ## 7. 集成与验收
 
 - [x] 7.1 全量检查通过：`flutter analyze` 零告警、`flutter test` 全绿、`bash scripts/check.sh` 成功
-- [ ] 7.2 按 `docs/VERIFICATION.md` 真机验收：用真实 Claude 会话验证 Markdown/代码块渲染、逐工具视图、分组、折叠、复制与 thinking 展示
+- [x] 7.2 按 `docs/VERIFICATION.md` 真机验收：用真实 Claude 会话验证 Markdown/代码块渲染、逐工具视图、分组、折叠、复制与 thinking 展示
