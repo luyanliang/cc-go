@@ -107,7 +107,11 @@ cc-go/
 
 ## 里程碑
 
+实施与验收状态以各变更的 [OpenSpec 任务清单](../openspec/changes/)（勾选即验收记录）与[真机验收步骤](VERIFICATION.md)为准；下列里程碑描述的是规划范围。
+
 1. **M1 daemon MVP** ✅：Agent SDK 包装（建会话/发消息/流式事件/权限/cancel）+ WS 协议 + 配对码 + TLS/TOFU；命令行测试客户端跑通全流程。
-2. **M2 APP 骨架** ✅：Flutter 工程 + 配对（配对码，扫码留待 M4）+ 会话列表 + 聊天 UI（工具行/输入条）。
+2. **M2 APP 骨架** ✅：Flutter 工程 + 配对 + 会话列表 + 聊天 UI（工具行/输入条）。
 3. **M3 完整交互** ✅（steer 插话留待后续）：会话接管（快照+续播）、权限卡片、queue、打断、后台保活与本地通知、断线重连；release APK 真机可用。
-4. **M4 SSH 隧道**（未开始）：dartssh2 direct-tcpip 转发传输层；mDNS 发现；扫码配对；Markdown/代码高亮等 UI 精修；打磨与发布打包。
+4. **M4 SSH 隧道**（代码已并入，待真机验收，见 `ssh-tunnel-mdns-qr-pairing` 变更）：dartssh2 direct-tcpip 转发传输层、mDNS 发现、扫码配对、多主机凭据管理。
+5. **多项目与会话历史**（代码已并入，待真机验收，见 `multi-project-history` 变更）：项目目录白名单、按项目分组、`~/.claude/projects` 会话发现/回放/接管、外部写入同步。
+6. **后续**：聊天 UI 精修（Markdown/代码高亮，对齐 dsh-Go 视觉）、steer 插话、发布打包。

@@ -7,17 +7,20 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../state/project_models.dart';
-import '../state/projects.dart';
+import '../state/host_entry.dart'
+import '../state/project_models.dart'
+import '../state/projects.dart'
 import '../state/providers.dart';
 import '../state/session_models.dart';
 import '../state/sessions.dart';
 import '../transport/reconnecting_link.dart';
+import '../transport/ssh/ssh_host_key.dart';
 import '../state/app_link.dart';
 import '../state/app_link_provider.dart';
 import 'chat/chat_screen.dart';
 import 'debug_events_screen.dart';
-import 'history/project_history_screen.dart';
+import 'history/project_history_screen.dart'
+import 'host_list_screen.dart'
 
 class SessionListScreen extends ConsumerWidget {
   const SessionListScreen({super.key});
@@ -39,12 +42,29 @@ class SessionListScreen extends ConsumerWidget {
                   Navigator.of(context).push(MaterialPageRoute<void>(
                     builder: (_) => const DebugEventsScreen(),
                   ));
+                case 'hosts':
+                  Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => const HostListScreen(),
+                  ));
                 case 'forget':
-                  await ref.read(credentialStoreProvider).clear();
-                  ref.invalidate(credentialsProvider);
+                  final entries = await ref.read(hostEntriesProvider.future);
+                  if (entries.isNotEmpty) {
+                    final entry = entries.first;
+                    await ref.read(hostEntryStoreProvider).remove(entry.id);
+                    await ref.read(sshSecretsStoreProvider).remove(entry.id);
+                    final ssh = entry.ssh;
+                    if (entry.mode == ConnectionMode.ssh && ssh != null) {
+                      // 忘记 SSH 主机指纹 → 下次连接重新 TOFU。
+                      await ref
+                          .read(sshHostKeyStoreProvider)
+                          .remove(sshHostKeyStoreKey(ssh.host, ssh.port));
+                    }
+                  }
+                  ref.invalidate(hostEntriesProvider);
               }
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'hosts', child: Text('主机管理')),
               PopupMenuItem(value: 'debug', child: Text('原始事件调试')),
               PopupMenuItem(value: 'forget', child: Text('忘记主机')),
             ],

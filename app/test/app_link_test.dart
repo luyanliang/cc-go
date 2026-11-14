@@ -8,10 +8,12 @@ import 'package:cc_go/notify/foreground_link.dart';
 import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
 import 'package:cc_go/state/app_link_provider.dart';
-import 'package:cc_go/state/credentials.dart';
+import 'package:cc_go/state/host_entry.dart';
 import 'package:cc_go/state/providers.dart';
 import 'package:cc_go/transport/host_link.dart';
 import 'package:cc_go/transport/reconnecting_link.dart';
+import 'package:cc_go/transport/ssh/ssh_host_key.dart';
+import 'package:cc_go/transport/ssh/ssh_secrets.dart';
 
 class _FakeLink implements HostLinkBase {
   final eventsController = StreamController<DaemonEvent>.broadcast();
@@ -60,19 +62,23 @@ class _FakeForegroundLink extends ForegroundLink {
 void main() {
   group('AppLink token-invalid flow (task 4.3)', () {
     testWidgets('token 被拒 → 清凭据 → 路由回配对屏', (tester) async {
-      final store = MemoryCredentialStore()
-        ..write(const HostCredentials(
+      final store = MemoryHostEntryStore()
+        ..save(const HostEntry(
+          id: 'default',
+          mode: ConnectionMode.direct,
+          hostName: 'desk',
           host: 'h',
           port: 8747,
           token: 'stale-token',
           fingerprint: 'AA:BB',
-          hostName: 'desk',
         ));
 
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            credentialStoreProvider.overrideWithValue(store),
+            hostEntryStoreProvider.overrideWithValue(store),
+            sshSecretsStoreProvider.overrideWithValue(MemorySshSecretsStore()),
+            sshHostKeyStoreProvider.overrideWithValue(SshHostKeyMemoryStore()),
             appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
             foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
             appLinkFactoryProvider.overrideWithValue((creds) {
@@ -87,17 +93,19 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('连接到电脑'), findsOneWidget, reason: '引导重新配对');
-      expect(await store.read(), isNull, reason: '失效凭据被清除');
+      expect(await store.readAll(), isEmpty, reason: '失效凭据被清除');
     });
 
     test('daemon 以 close 4003 拒绝 → 同样触发 tokenInvalid', () async {
       final link = AppLink.custom(
-        const HostCredentials(
+        const HostEntry(
+          id: 'default',
+          mode: ConnectionMode.direct,
+          hostName: 'desk',
           host: 'h',
           port: 8747,
           token: 'stale',
           fingerprint: 'AA',
-          hostName: 'desk',
         ),
         () async => throw const AuthRejectedByServer('unauthorized'),
       );
@@ -109,12 +117,14 @@ void main() {
 
     test('正常连接暴露 wrapped link 状态流', () async {
       final link = AppLink.custom(
-        const HostCredentials(
+        const HostEntry(
+          id: 'default',
+          mode: ConnectionMode.direct,
+          hostName: 'desk',
           host: 'h',
           port: 8747,
           token: 't',
           fingerprint: 'AA',
-          hostName: 'desk',
         ),
         () async => _FakeLink(),
       );

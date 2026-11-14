@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-CC-Go lets a phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over LAN WebSocket (or an SSH tunnel), then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI.
+CC-Go lets an Android phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over TLS WebSocket, then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI. The SSH tunnel is planned for M4.
 
-- `daemon/` — the PC side (Node.js/TypeScript). All working code lives here today (milestone M1).
-- `app/` — the phone side (Flutter, Android only, `dev.luke.cc_go`). Implemented: pairing (host/port/6-digit code → device token + cert fingerprint in secure storage), session list, chat transcript (user/assistant/tool/notice items, queue-mode send, interrupt), inline permission cards, background keep-alive (foreground service + local notifications), auto-reconnect with snapshot resync.
+- `daemon/` — the PC side (Node.js/TypeScript): pairing, TLS, authenticated WebSocket, session management, project registry, and Claude Code session-history discovery/replay/takeover.
+- `app/` — the phone side (Flutter, Android only, `dev.luke.cc_go`, minSdk 26). Implemented: pairing (code / QR / mDNS / SSH-tunnel host entries), session list grouped by project, chat transcript (queue-mode send, interrupt), inline permission cards, project session-history browse with read-only replay and takeover, background keep-alive + notifications, auto-reconnect with snapshot resync. Device acceptance steps live in `docs/VERIFICATION.md`.
 - `reference/` — **read-only** third-party codebases kept for pattern reference: `dsh-Go` (Flutter chat-UI patterns) and `happy-main` (happy-cli — driving Claude Code via the Agent SDK). `docs/ARCHITECTURE.md` maps which techniques come from which project.
 - `docs/ARCHITECTURE.md` (written in Chinese) — authoritative design doc: architecture diagram, confirmed decisions, milestones M1–M4.
-- `openspec/` — spec-driven change management via the `openspec-*` skills.
+- `openspec/` — spec-driven change management via the `openspec-*` skills. The task checkboxes are the acceptance record; do not check an item merely because code exists.
+- `README.md` — setup and normal development entry point. `docs/VERIFICATION.md` — device acceptance steps.
 
 ## Commands
 
@@ -18,21 +19,22 @@ All daemon commands run from `daemon/`:
 
 ```bash
 cd daemon
-npm install
+npm ci
 npm run build        # tsc → dist/
 npm run dev          # tsx watch src/index.ts
 npm run typecheck    # tsc --noEmit
-npm test             # vitest run — unit tests live in test/*.test.ts (currently tls.ts coverage)
+npm test             # vitest run — unit and local HTTP/WebSocket boundary tests
 ```
 
 ### Running the daemon
 
 ```bash
-node bin/cc-go.mjs [--port 8747] [--localhost] [--name <name>] [--code <code>] [--no-tls]
+node bin/cc-go.mjs [--port 8747] [--localhost] [--name <name>] [--code <code>] [--no-tls] [--project <dir> ...]
 ```
 
-- All endpoints (HTTP + WebSocket) are served over **TLS by default** (`https`/`wss`): a self-signed ECDSA P-256 certificate is generated on first run into `~/.cc-go/tls-{cert,key}..pem` and reused forever. Startup prints its SHA-256 fingerprint next to the pairing code — clients pin it on first connection (TOFU) and fail closed if it changes.
-- `--localhost` binds 127.0.0.1 (SSH-tunnel mode); default binds 0.0.0.0. `--no-tls` is a plaintext dev mode that forces loopback binding.
+- All endpoints (HTTP + WebSocket) are served over **TLS by default** (`https`/`wss`): a self-signed ECDSA P-256 certificate is generated on first run into `~/.cc-go/tls-{cert,key}.pem` and reused. Startup prints its SHA-256 fingerprint next to the pairing code — clients pin it on first connection (TOFU) and fail closed if it changes.
+- `--localhost` binds 127.0.0.1 (SSH-tunnel mode); default binds 0.0.0.0. `--no-tls` is a plaintext dev mode that forces loopback binding. `--project <dir>` (repeatable) registers a project-directory whitelist — sessions may only be created/discovered/imported inside registered projects; with none registered, the startup directory becomes the default project.
+- **LAN discovery & QR pairing** (`src/discovery.ts`): in default (LAN + TLS) mode the daemon advertises `_ccgo._tcp` over mDNS with its cert fingerprint in the TXT record, and the startup banner prints a `ccgo://pair?host=…&port=…&code=…&fingerprint=…` QR code (built by `pairingQrPayload` in `server.ts`). `--localhost` and `--no-tls` never advertise; the QR carries no fingerprint in plaintext mode.
 - Requires the `claude` CLI on PATH and authenticated — the Agent SDK spawns it for every session.
 
 ### Smoke test (end-to-end, plays the phone)
@@ -49,14 +51,17 @@ The smoke client pairs over HTTPS, opens the WebSocket, and exercises: Q&A turn 
 
 ```bash
 cd app
+flutter pub get              # first run or dependency changes
 flutter analyze               # zero warnings required
+flutter test
 flutter run                   # needs a device visible in adb devices
 flutter build apk --debug     # → build/app/outputs/flutter-apk/app-debug.apk
 flutter build apk --release   # signed with the debug keystore (personal sideload, design D6)
 ```
 
-- Toolchain is user-level under `~/development/` (Flutter 3.50.0, JDK17, Android SDK); PATH + China mirrors (`storage.flutter-io.cn` for Flutter artifacts, Tencent mirror for Gradle) are configured in `~/.profile` — do not point the Gradle wrapper back at `services.gradle.org` (slow + corrupts on this network).
+- The project targets Flutter 3.50.0, JDK 17 and an Android SDK. For networks that cannot reach pub.dev, use the mirror command in `README.md` when installing dependencies. CI uses the default package source.
 - Android: `applicationId dev.luke.cc_go`, minSdk 26, Android is the only platform.
+- Full repository check: `bash scripts/check.sh --setup` on first use, then `bash scripts/check.sh`. CI uses the same command. Node and Flutter versions are pinned in `.node-version` and `.fvmrc`.
 
 ## Daemon architecture
 
@@ -64,15 +69,17 @@ Four layers, one direction of dependency: `server.ts` → `agent/manager.ts` →
 
 - **`src/protocol.ts`** — Zod schemas for the whole wire protocol. A single WebSocket carries JSON frames: requests `{id, method, params}` → responses `{id, ok, result|error}`, plus pushes `{type: "event", event}`. A session transcript is a list of **items** (`user` / `assistant` / `tool` / `notice`); the daemon owns the list and every `item.updated` carries the complete item, so the phone replaces items wholesale and snapshot + live stream merge idempotently by item id.
 - **`src/server.ts`** — network face. HTTP `/health`, `/info` (pre-pairing host info), `/pair` (6-digit code → long-lived device token; rate-limited, timing-safe compare). WebSocket `/ws`: first message must be `hello {token}` (10 s timeout). Transcript events go only to connections that called `session.watch`; `permission.request` and `sessions.changed` are broadcast to every authed connection (the phone needs notifications even without the chat screen open).
-- **`src/agent/manager.ts`** — owns live sessions and fans events out to the server. Summaries are persisted on every change; after a daemon restart `ensureLive()` rehydrates a persisted session on demand — same id, Claude context survives via `resume: claudeSessionId`, but the phone's item history starts fresh with a notice (replaying `~/.claude/projects` JSONL is a later milestone).
+- **`src/agent/manager.ts`** — owns live sessions and fans events out to the server. Summaries are persisted on every change; after a daemon restart `ensureLive()` rehydrates a persisted session on demand — same id, Claude context survives via `resume: claudeSessionId`, replaying `~/.claude/projects` JSONL into items is implemented for imported sessions (`src/history.ts`); plain rehydrated sessions still start with a notice.
 - **`src/agent/session.ts`** — one Claude Code conversation via `@anthropic-ai/claude-agent-sdk` `query()`:
   - Prompts flow through a queue into `PushablePrompt` (a pushable async iterable passed as the SDK prompt stream). One `query()` spans multiple turns while work remains, then is recreated with `resume`. Claude's resume forks under a **new** session id, so the current id is re-tracked from every message frame (`trackClaudeSession`).
   - Send modes: `queue` (wait for the current turn) vs `interrupt` (abort, then send). `cancel` aborts and denies all pending permissions.
   - Permissions: `canUseTool` parks a Promise → `permission.request` event → phone answers via `permission.respond {itemId, allow, allowToolForSession}`.
   - Stream deltas build assistant items incrementally; the final `assistant` message replaces the draft wholesale. Own prompts echoed back by the SDK are dropped via a 90 s echo-guard map keyed by text.
   - Sets `CLAUDE_CODE_ENTRYPOINT=cc-go` so daemon sessions stay visible in `claude --resume`.
-- **`src/store.ts`** — single `~/.cc-go/store.json` (atomic tmp+rename, mode 0600): daemon id/name, paired device tokens, session summaries.
+- **`src/store.ts`** — single `~/.cc-go/store.json` (atomic tmp+rename, mode 0600): daemon id/name, paired device tokens, session summaries, project-directory whitelist.
+- **`src/history.ts`** — reads Claude Code's own transcripts under `~/.claude/projects/<encoded-cwd>/`: discovery, paged replay through the shared JSONL→item `TranscriptMapper`, import prefill, and the lineage-checked tail that merges terminal-side `--resume` writes into imported sessions.
 - **`src/tls.ts`** — self-signed certificate lifecycle: generated on first run (`selfsigned`, ECDSA P-256), persisted in `~/.cc-go/`, reused across restarts; exposes the openssl-style SHA-256 fingerprint clients pin (TOFU).
+- **`src/discovery.ts`** — mDNS advertisement (`bonjour-service`, `_ccgo._tcp`, fingerprint in TXT) started by `server.ts` only in LAN+TLS mode; stopped when the server closes.
 
 ## App architecture
 

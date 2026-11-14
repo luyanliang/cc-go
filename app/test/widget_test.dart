@@ -10,8 +10,10 @@ import 'package:cc_go/notify/foreground_link.dart';
 import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
 import 'package:cc_go/state/app_link_provider.dart';
-import 'package:cc_go/state/credentials.dart';
+import 'package:cc_go/state/host_entry.dart';
 import 'package:cc_go/state/providers.dart';
+import 'package:cc_go/transport/ssh/ssh_host_key.dart';
+import 'package:cc_go/transport/ssh/ssh_secrets.dart';
 import 'package:cc_go/transport/host_link.dart';
 
 /// 可编程假 daemon：host.info/session.create/projects.list 可预设，事件可注入。
@@ -78,20 +80,24 @@ class FakeDaemonLink implements HostLinkBase {
 }
 
 class Harness {
-  final store = MemoryCredentialStore();
+  final store = MemoryHostEntryStore();
   final fake = FakeDaemonLink();
 
   Widget boot() {
-    store.write(const HostCredentials(
+    store.save(const HostEntry(
+      id: 'default',
+      mode: ConnectionMode.direct,
+      hostName: 'desk',
       host: '203.0.113.7',
       port: 8747,
       token: 'tok',
       fingerprint: 'AA:BB',
-      hostName: 'desk',
     ));
     return ProviderScope(
       overrides: [
-        credentialStoreProvider.overrideWithValue(store),
+        hostEntryStoreProvider.overrideWithValue(store),
+        sshSecretsStoreProvider.overrideWithValue(MemorySshSecretsStore()),
+        sshHostKeyStoreProvider.overrideWithValue(SshHostKeyMemoryStore()),
         appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
         foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
         appLinkFactoryProvider.overrideWithValue(
@@ -162,7 +168,7 @@ void main() {
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          credentialStoreProvider.overrideWithValue(MemoryCredentialStore()),
+          hostEntryStoreProvider.overrideWithValue(MemoryHostEntryStore()),
           appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
           foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
         ],
@@ -270,6 +276,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('连接到电脑'), findsOneWidget);
-    expect(await h.store.read(), isNull);
+    expect(await h.store.readAll(), isEmpty);
   });
 }
