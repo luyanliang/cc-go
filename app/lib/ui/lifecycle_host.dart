@@ -70,6 +70,11 @@ class _LifecycleHostState extends ConsumerState<LifecycleHost>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _policy.setBackground(state != AppLifecycleState.resumed);
+    if (state == AppLifecycleState.resumed) {
+      // 回前台 = 值得检查连接的时刻（Android 可能冻结过 socket；
+      // network-kicks design D3：UI 层只递事件，消费在 AppLink/链接层）。
+      ref.read(appLinkProvider).value?.kicks.resume();
+    }
     if (state == AppLifecycleState.paused && !_batteryPrompted) {
       _batteryPrompted = true;
       _promptBatteryOptimization();

@@ -252,16 +252,23 @@ class HostLink implements HostLinkBase {
   ///
   /// `customClient` is the TLS seam: task 3.2 installs a pinned-cert
   /// [HttpClient] here; passing `null` uses the default context.
+  ///
+  /// `pingInterval` 是基线判死器（network-kicks design D6）：dart:io 定期发
+  /// WS ping 帧，连续无 pong 即触发 socket 错误走既有重连——兜住网络切换
+  /// 事件覆盖不了的场景（Wi-Fi ↔ Wi-Fi 同类型切换、纯掉线后的半开连接）。
+  /// 服务端（ws 库）自动回 pong，daemon 侧无需改动。
   static Future<HostLink> connect({
     required Uri wsUri,
     required String token,
     HttpClient? customClient,
     Duration helloTimeout = const Duration(seconds: 10),
+    Duration? pingInterval = const Duration(seconds: 15),
   }) async {
     final socket = await WebSocket.connect(
       wsUri.toString(),
       customClient: customClient,
     );
+    if (pingInterval != null) socket.pingInterval = pingInterval;
     final link = HostLink._(socket);
     link._subscription = socket.asBroadcastStream().listen(
           link._onData,

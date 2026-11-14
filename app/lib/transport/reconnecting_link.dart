@@ -27,12 +27,16 @@ class ReconnectingHostLink {
     required this.connector,
     this.baseDelay = const Duration(seconds: 1),
     this.maxDelay = const Duration(seconds: 30),
+    this.probeTimeout = const Duration(seconds: 5),
   });
 
   /// Dials + handshakes a fresh link; throws on failure (the loop retries).
   final LinkConnector connector;
   final Duration baseDelay;
   final Duration maxDelay;
+
+  /// [kick] 在已连接态的探测超时（network-kicks design D2）。
+  final Duration probeTimeout;
 
   // BehaviorSubject：每个新订阅者立即收到当前状态（晚订阅的 UI——
   // 断线横幅、连接角标、生命周期接线——都不该错过最新值）。
@@ -45,6 +49,10 @@ class ReconnectingHostLink {
   Completer<void>? _dropped;
   var _attempt = 0;
   var _stopped = false;
+  // kick 锁存（design D2）：拨号中/探测中到达的 kick 是"值得检查的时刻"，
+  // 丢弃即永久丢失加速机会，锁存到本轮失败/探测结束后消费。
+  var _kickPending = false;
+  var _probing = false;
 
   /// Connection state transitions (for the UI's offline banner, task 8.4).
   /// New listeners immediately receive the current state.
@@ -88,6 +96,52 @@ class ReconnectingHostLink {
   }
 
   void unwatch(String sessionId) => _watchedSessionIds.remove(sessionId);
+
+  /// 网络切换 / 回前台的主动检查入口（network-kicks design D2）。
+  ///
+  /// 只加速既有重连机制，不引入并行重连路径：
+  /// - 退避等待中：打断等待立即重试，**不重置 `_attempt`**——立即重试语义由
+  ///   打断达成，成功后 `_loop` 本就归零；失败则梯子继续爬升，daemon 不可达
+  ///   期间连续 kick 不会把重试节奏钉死在 1s；
+  /// - 已连接：`host.info` 探测（[probeTimeout] 超时），失败经身份闸只关发起
+  ///   探测的那条链路，防误杀探测期间刚重连的新链路；
+  /// - 拨号中 / 探测中：锁存（`_kickPending`），本轮失败/探测结束后消费；
+  /// - stop 后：忽略（BehaviorSubject.value 在 close 后返回旧值，不可依赖）。
+  void kick() {
+    if (_stopped) return;
+    // 退避等待中的判别式（design D2）：`stop()` 的既有守卫同款写法；
+    // 禁止以 `_retryTimer != null` 或裸 `state == connecting` 作判据。
+    final backoff = _backoffWait;
+    if (backoff != null && !backoff.isCompleted) {
+      _kickPending = false; // 这次 kick 的消费就是打断本身
+      backoff.complete();
+      return;
+    }
+    final link = _current;
+    if (link == null || _probing) {
+      _kickPending = true;
+      return;
+    }
+    _probe(link);
+  }
+
+  /// 已连接态的存活探测（design D2）：廉价 RPC + 超时，失败判死走既有重连。
+  void _probe(HostLinkBase link) {
+    _probing = true;
+    unawaited(() async {
+      try {
+        await link.call('host.info').timeout(probeTimeout);
+      } on Object {
+        if (identical(_current, link)) {
+          _kickPending = false; // 判死触发的重连即本次 kick 的消费
+          await link.close(reason: 'network kick probe failed');
+        }
+      } finally {
+        _probing = false;
+        _kickPending = false;
+      }
+    }());
+  }
 
   /// Runs a call on the live link.
   ///
@@ -165,6 +219,7 @@ class ReconnectingHostLink {
         );
         _setState(LinkState.connected);
         _attempt = 0;
+        _kickPending = false; // 新链路已建，挂起的 kick 失去意义
         // Re-subscribe: every watched session gets a fresh snapshot,
         // re-emitted on the merged event stream by _watchOn.
         for (final sessionId in List<String>.from(_watchedSessionIds)) {
@@ -174,6 +229,12 @@ class ReconnectingHostLink {
       } on Object {
         _current = null;
         if (_stopped) return;
+        if (_kickPending) {
+          // 拨号挂起期间到达的 kick：网络可能已恢复，跳过退避立即重试
+          // （design D2 的锁存消费点）。
+          _kickPending = false;
+          continue;
+        }
         await _waitBackoff(backoffFor(_attempt));
         _attempt++;
       }
