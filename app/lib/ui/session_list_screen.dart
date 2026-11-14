@@ -16,17 +16,26 @@ import '../state/sessions.dart';
 import '../transport/reconnecting_link.dart';
 import '../transport/ssh/ssh_host_key.dart';
 import '../state/app_link.dart';
+import '../state/history_api.dart';
 import '../state/app_link_provider.dart';
 import 'chat/chat_screen.dart';
 import 'debug_events_screen.dart';
 import 'history/project_history_screen.dart';
 import 'host_list_screen.dart';
 
-class SessionListScreen extends ConsumerWidget {
+class SessionListScreen extends ConsumerStatefulWidget {
   const SessionListScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SessionListScreen> createState() => _SessionListScreenState();
+}
+
+class _SessionListScreenState extends ConsumerState<SessionListScreen> {
+  /// 折叠的分组键（路径 / 未注册兜底名）——纯视觉状态，不持久化。
+  final Set<String> _collapsedGroups = {};
+
+  @override
+  Widget build(BuildContext context) {
     final groups = ref.watch(sessionGroupsProvider);
     final appLink = ref.watch(appLinkProvider);
 
@@ -130,6 +139,46 @@ class SessionListScreen extends ConsumerWidget {
     );
   }
 
+  /// 长按分组行注销项目（session-group-interactions 2.4）：确认对话框
+  /// 说明"重启 daemon 若以 --project 启动会重新注册"，确认后调
+  /// projects.unregister 并刷新列表。仅已注册组有此入口。
+  Future<void> _confirmUnregister(ProjectGroup group) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('注销项目 ${group.name}？'),
+        content: const Text('注销后该目录不能再新建或发现会话；组内已有会话仍会保留。'
+            '注意：如果 daemon 重启时仍以 --project 参数注册该目录，它会重新出现。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('注销'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final api = ref.read(historyApiProvider);
+      if (api == null) {
+        throw StateError('连接未就绪');
+      }
+      final removed = await api.unregisterProject(group.path!);
+      await _refreshAll(ref);
+      messenger.showSnackBar(SnackBar(
+        content: Text(removed ? '已注销项目 ${group.name}' : '该项目本就未注册'),
+      ));
+    } on Object catch (error) {
+      messenger.showSnackBar(SnackBar(content: Text('注销失败：$error')));
+    }
+  }
+
   Future<void> _refreshAll(WidgetRef ref) async {
     await Future.wait([
       ref.read(sessionsProvider.notifier).refresh(),
@@ -140,23 +189,35 @@ class SessionListScreen extends ConsumerWidget {
   /// 一个分组 = 组头 + 会话行（或空分组提示）。
   List<Widget> _groupTiles(BuildContext context, ProjectGroup group) {
     return [
-      _GroupHeader(group: group),
-      if (group.sessions.isEmpty)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: Text(
-            group.available
-                ? '该项目还没有会话，点右下角新建'
-                : '目录已不存在，无法新建或发现会话',
-            style: TextStyle(
-              color: Theme.of(context).hintColor,
-              fontSize: 13,
+      _GroupHeader(
+        group: group,
+        collapsed: _collapsedGroups.contains(group.path ?? group.name),
+        onToggle: () => setState(() {
+          final key = group.path ?? group.name;
+          if (!_collapsedGroups.remove(key)) _collapsedGroups.add(key);
+        }),
+        onLongPress: group.registered
+            ? () => _confirmUnregister(group)
+            : null,
+      ),
+      if (group.sessions.isEmpty ||
+          !_collapsedGroups.contains(group.path ?? group.name)) ...[
+        if (group.sessions.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              group.available
+                  ? '该项目还没有会话，点右下角新建'
+                  : '目录已不存在，无法新建或发现会话',
+              style: TextStyle(
+                color: Theme.of(context).hintColor,
+                fontSize: 13,
+              ),
             ),
-          ),
-        )
-      else
-        for (final session in group.sessions)
-          _SessionTile(session: session),
+          )
+        else
+          for (final session in group.sessions) _SessionTile(session: session),
+      ],
       const Divider(height: 1, indent: 16, endIndent: 16),
     ];
   }
@@ -258,10 +319,19 @@ class _ConnectionChip extends ConsumerWidget {
 }
 
 /// 分组头：项目显示名 + 路径 + 失效标记（置灰）+ 会话历史入口。
+/// 点击折叠/展开该组；长按（已注册项目）注销项目。
 class _GroupHeader extends StatelessWidget {
-  const _GroupHeader({required this.group});
+  const _GroupHeader({
+    required this.group,
+    required this.collapsed,
+    this.onToggle,
+    this.onLongPress,
+  });
 
   final ProjectGroup group;
+  final bool collapsed;
+  final VoidCallback? onToggle;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -275,6 +345,19 @@ class _GroupHeader extends StatelessWidget {
     return ListTile(
       dense: true,
       contentPadding: const EdgeInsets.fromLTRB(16, 4, 8, 0),
+      onTap: onToggle,
+      onLongPress: onLongPress,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            collapsed ? Icons.expand_more : Icons.expand_less,
+            size: 20,
+            color: theme.hintColor,
+          ),
+          _historyEntry(context, group),
+        ],
+      ),
       leading: Icon(
         group.available ? Icons.folder_outlined : Icons.folder_off_outlined,
         size: 22,
@@ -302,21 +385,24 @@ class _GroupHeader extends StatelessWidget {
         ],
       ),
       subtitle: Text(group.path ?? '未注册目录', maxLines: 1, style: subStyle),
-      trailing: (group.available && group.registered)
-          ? IconButton(
-              key: ValueKey('project-history-${group.path}'),
-              tooltip: '会话历史',
-              onPressed: () => _openHistory(context),
-              icon: const Icon(Icons.history),
-            )
-          : IconButton(
-              // 失效目录/未注册目录无法发现会话，入口禁用但可见。
-              key: ValueKey('project-history-disabled-${group.name}'),
-              tooltip: group.available ? '未注册目录，历史不可用' : '目录不存在，历史不可用',
-              onPressed: null,
-              icon: Icon(Icons.history, color: theme.disabledColor),
-            ),
     );
+  }
+
+  /// 历史导入入口：注册且存在的目录可用；未注册/失效目录禁用但可见。
+  Widget _historyEntry(BuildContext context, ProjectGroup group) {
+    return (group.available && group.registered)
+        ? IconButton(
+            key: ValueKey('project-history-${group.path}'),
+            tooltip: '会话历史',
+            onPressed: () => _openHistory(context),
+            icon: const Icon(Icons.history),
+          )
+        : IconButton(
+            key: ValueKey('project-history-disabled-${group.name}'),
+            tooltip: group.available ? '未注册目录，历史不可用' : '目录不存在，历史不可用',
+            onPressed: null,
+            icon: Icon(Icons.history, color: Theme.of(context).disabledColor),
+          );
   }
 
   void _openHistory(BuildContext context) {

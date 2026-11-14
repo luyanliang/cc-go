@@ -36,6 +36,7 @@ import {
   PairRequest,
   PermissionRespondParams,
   ProjectsRegisterParams,
+  ProjectsUnregisterParams,
   SessionConfigureParams,
   SessionCreateParams,
   SessionHistoryParams,
@@ -290,6 +291,18 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
         }
         const canonical = store.addProject(parsed.data.path)
         return { project: projectInfo(canonical) }
+      }
+
+      case 'projects.unregister': {
+        // 手机端长按分组注销（session-group-interactions）。幂等：未注册
+        // 返回 removed:false 而非报错。运行时注册表语义——--project 注册的
+        // 项目在 daemon 重启后会重新出现，对话框文案已说明。
+        const parsed = ProjectsUnregisterParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const canonical = store.canonicalProjectPath(parsed.data.path)
+        const removed = store.hasProject(parsed.data.path)
+        if (removed) store.removeProject(canonical)
+        return { removed }
       }
 
       case 'sessions.discover': {

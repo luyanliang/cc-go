@@ -35,6 +35,14 @@ class HistoryApi {
     return ProjectInfo.fromJson(result['project'] as Map<String, dynamic>);
   }
 
+  /// 注销一个项目目录（session-group-interactions：长按分组行）。
+  /// 幂等：未注册返回 removed=false。仅影响运行时注册表。
+  Future<bool> unregisterProject(String path) async {
+    final result = await _call('projects.unregister', {'path': path})
+        as Map<String, dynamic>;
+    return result['removed'] as bool? ?? false;
+  }
+
   /// 扫描某项目目录的 Claude Code 会话（含终端创建的），按最后活动倒序。
   Future<List<DiscoveredSession>> discoverSessions(String cwd) async {
     final result =

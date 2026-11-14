@@ -171,6 +171,10 @@ List<ProjectGroup> groupSessionsByProject(
     ));
   }
 
+  // 未注册且无会话的兜底组没有信息量（无历史入口、无会话），直接隐藏
+  // （session-group-interactions spec「空的未注册分组隐藏」）。
+  groups.removeWhere((g) => !g.registered && g.sessions.isEmpty);
+
   // 组间排序：最近活动优先；空组垫后按名称（同名按路径稳定）。
   DateTime latest(ProjectGroup g) => g.sessions.isEmpty
       ? DateTime.fromMillisecondsSinceEpoch(0)
