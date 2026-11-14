@@ -7,27 +7,33 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app_link.dart';
-import 'credentials.dart';
+import 'host_entry.dart';
 import 'providers.dart';
 
-final appLinkFactoryProvider =
-    Provider<AppLink Function(HostCredentials)>((ref) => AppLink.fromCredentials);
+final appLinkFactoryProvider = Provider<AppLink Function(HostEntry)>((ref) {
+  return (entry) => AppLink.fromEntry(
+        entry,
+        sshSecrets: ref.read(sshSecretsStoreProvider),
+        sshHostKeyStore: ref.read(sshHostKeyStoreProvider),
+      );
+});
 
 /// 主连接：已配对时创建并启动；token 失效 → 停止重试、清凭据、路由回
-/// 配对屏（task 4.3）。凭据变化（重新配对/忘记主机）时自动重建。
+/// 配对屏（task 4.3）。主机变化（重新配对/忘记主机/增删主机）时自动重建。
 final appLinkProvider = FutureProvider<AppLink>((ref) async {
-  final credentials = await ref.watch(credentialsProvider.future);
-  if (credentials == null) {
-    throw StateError('appLinkProvider requires paired credentials');
+  final entry = await ref.watch(activeEntryProvider.future);
+  if (entry == null) {
+    throw StateError('appLinkProvider requires a paired host entry');
   }
 
-  final appLink = ref.watch(appLinkFactoryProvider)(credentials);
+  final appLink = ref.watch(appLinkFactoryProvider)(entry);
 
   // token 失效：停止重试、清凭据、路由回配对屏（task 4.3）。
   final sub = appLink.tokenInvalid.listen((_) async {
     await appLink.stop();
-    await ref.read(credentialStoreProvider).clear();
-    ref.invalidate(credentialsProvider);
+    await ref.read(hostEntryStoreProvider).remove(entry.id);
+    await ref.read(sshSecretsStoreProvider).remove(entry.id);
+    ref.invalidate(hostEntriesProvider);
   });
   ref.onDispose(() {
     unawaited(sub.cancel());
