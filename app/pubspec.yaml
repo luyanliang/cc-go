@@ -45,6 +45,9 @@ dependencies:
   dartssh2: ^2.9.5
   bonsoir: ^7.1.6
   mobile_scanner: ^7.0.1
+  gpt_markdown: ^1.3.4
+  re_highlight: ^0.0.3
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:
