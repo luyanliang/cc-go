@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/transcript.dart';
 import 'chat_row_model.dart';
+import 'image_viewer.dart';
 import 'render/assistant_markdown.dart';
 import 'render/copy_button.dart';
 import 'tool_views.dart';
@@ -259,8 +260,42 @@ class _UserBubble extends StatelessWidget {
           color: scheme.primaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        // 可选中文本：长按拖选后经系统选择菜单复制（task 1.3）。
-        child: SelectableText(item.text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 可选中文本：长按拖选后经系统选择菜单复制（task 1.3）。
+            SelectableText(item.text),
+            // 附件缩略图（task 2.4）：点开全屏查看。
+            if (item.attachments.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: [
+                  for (final attachment in item.attachments)
+                    GestureDetector(
+                      onTap: () => showAttachmentFullScreen(context, attachment),
+                      child: Container(
+                        width: 96,
+                        height: 96,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: scheme.surfaceContainerHighest,
+                        ),
+                        child: Image.memory(
+                          base64Decode(attachment.dataBase64),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -408,6 +443,30 @@ class _ToolRow extends StatelessWidget {
             ),
             Text(item.summary!, style: theme.textTheme.bodySmall),
           ],
+        ],
+        // 结果图片（task 3.4）：所有工具类型统一在展开区尾部展示。
+        if (item.resultImages.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final image in item.resultImages)
+                GestureDetector(
+                  onTap: () => showAttachmentFullScreen(context, image),
+                  child: Container(
+                    width: 128,
+                    height: 128,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: theme.colorScheme.surfaceContainerHighest,
+                    ),
+                    child: Image.memory(base64Decode(image.dataBase64), fit: BoxFit.cover),
+                  ),
+                ),
+            ],
+          ),
         ],
       ],
     );

@@ -21,22 +21,27 @@ import {
   type CanUseTool,
   type Options,
   type PermissionResult,
+  type Query,
   type SDKMessage,
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
   AssistantItem,
+  Attachment,
   DaemonEvent,
   Item,
+  ModelInfoDto,
   PermissionMode,
   SendMode,
   SessionEvent,
   SessionSummary,
+  SessionUsage,
   ToolItem,
   UserItem,
 } from '../protocol.js'
 import {
   TranscriptMapper,
+  extractToolResult,
   newestTranscriptIn,
   summarizeToolContent,
   transcriptPath,
@@ -100,10 +105,14 @@ export interface SessionCallbacks {
   onEvent(event: DaemonEvent): void
   /** Persisted whenever the summary-relevant state changes. */
   onSummary(): void
+  /** Called once per query init with the host-level model catalog, when the
+   *  CLI supports it (older CLIs never fire this — manager falls back). */
+  onModels?(models: ModelInfoDto[], current: string | null): void
 }
 
 interface QueuedPrompt {
   text: string
+  attachments?: Attachment[]
 }
 
 interface PendingPermission {
@@ -134,6 +143,11 @@ export class Session {
   originClaudeSessionId: string | null = null
   createdAt = Date.now()
   updatedAt = Date.now()
+  /** Slash commands available in this session (terminal-bound ones filtered),
+   *  descriptions best-effort via supportedCommands(). */
+  slashCommands: { name: string; description?: string }[] = []
+  /** Usage & cumulative cost from the latest finished turn; null before any. */
+  usage: SessionUsage | null = null
 
   private callbacks: SessionCallbacks
   private items: Item[] = []
@@ -145,6 +159,8 @@ export class Session {
   private loopActive = false
   private currentPushable: PushablePrompt | null = null
   private currentAbort: AbortController | null = null
+  /** The live query object — control-plane calls (models/commands) go here. */
+  private currentQuery: Query | null = null
   private pendingPermissions = new Map<string, PendingPermission>()
   private echoGuard = new Map<string, number>()
   private disposed = false
@@ -374,6 +390,7 @@ export class Session {
       permissionMode: this.permissionMode,
       origin: this.origin,
       originClaudeSessionId: this.originClaudeSessionId,
+      usage: this.usage ?? undefined,
     }
   }
 
@@ -399,15 +416,16 @@ export class Session {
   }
 
   /** Send a user message. `queue` waits for the current turn; `interrupt`
-   *  aborts it first. */
-  prompt(text: string, mode: SendMode): void {
-    this.addUserItem(text, 'phone')
+   *  aborts it first. Attachments (if any) travel inside the same user
+   *  message as image blocks. */
+  prompt(text: string, mode: SendMode, attachments?: Attachment[]): void {
+    this.addUserItem(text, 'phone', attachments)
     if (this.title === 'New session') {
       this.title = text.slice(0, 48).replace(/\s+/g, ' ').trim() || 'New session'
       this.callbacks.onSummary()
     }
     if (mode === 'interrupt' && this.phase === 'running') {
-      this.queue.push({ text })
+      this.queue.push({ text, attachments })
       this.currentAbort?.abort()
       return
     }
@@ -416,11 +434,11 @@ export class Session {
       // prompt straight to it with priority "next" so the SDK runs it after
       // the current turn. (Routing it through this.queue would deadlock —
       // the queue is only drained between queries.)
-      this.currentPushable.push(userMessage(text, 'next'))
+      this.currentPushable.push(userMessage(text, 'next', attachments))
       this.echoGuard.set(text, Date.now())
       return
     }
-    this.queue.push({ text })
+    this.queue.push({ text, attachments })
     void this.pump()
   }
 
@@ -504,11 +522,12 @@ export class Session {
 
     const first = this.queue.shift()
     if (!first) return
-    pushable.push(userMessage(first.text))
+    pushable.push(userMessage(first.text, undefined, first.attachments))
     this.echoGuard.set(first.text, Date.now())
 
     try {
       const q = query({ prompt: pushable, options })
+      this.currentQuery = q
       for await (const message of q) {
         this.handleMessage(message)
       }
@@ -517,6 +536,7 @@ export class Session {
         this.addNotice('error', `Query failed: ${errorMessage(err)}`)
       }
     } finally {
+      this.currentQuery = null
       this.currentPushable = null
       this.currentAbort = null
     }
@@ -572,11 +592,18 @@ export class Session {
 
   // ---- SDK message handling --------------------------------------------------
 
+  /** Test seam: feed one SDK message through the handler pipeline without
+   *  spawning a CLI (init/result capture tests). */
+  ingest(message: SDKMessage): void {
+    this.handleMessage(message)
+  }
+
   private handleMessage(message: SDKMessage): void {
     switch (message.type) {
       case 'system':
         if (message.subtype === 'init') {
           this.trackClaudeSession(message.session_id)
+          this.handleInit(message)
         }
         break
       case 'stream_event':
@@ -593,6 +620,126 @@ export class Session {
         break
       default:
         break // informational messages are ignored in v1
+    }
+  }
+
+  /** init 捕获（transcript-data-protocol D4/D5）：实际模型、指令目录与
+   *  host 级模型目录缓存。旧 CLI 缺字段时全部走空值降级。 */
+  private handleInit(message: Extract<SDKMessage, { type: 'system'; subtype: 'init' }>): void {
+    if (typeof message.model === 'string' && message.model !== '') {
+      this.model = message.model // 实际使用的模型覆盖配置值
+    }
+    const terminal = new Set(message.terminal_slash_commands ?? [])
+    this.slashCommands = (message.slash_commands ?? [])
+      .filter((name) => !terminal.has(name))
+      .map((name) => ({ name: name.replace(/^\//, '') }))
+    // 描述尽力而为：取不到（旧 CLI / 不支持）就只有名字。
+    void this.currentQuery
+      ?.supportedCommands()
+      .then((commands) => {
+        const byName = new Map(commands.map((c) => [c.name, c]))
+        this.slashCommands = this.slashCommands.map((c) => {
+          const full = byName.get(c.name)
+          return full?.description ? { ...c, description: full.description } : c
+        })
+        this.callbacks.onSummary()
+      })
+      .catch(() => {})
+    // host 级模型目录：manager 缓存，供 host.models RPC 使用；探测等待
+    // 中的 probe 也靠这份结果唤醒。
+    void this.currentQuery
+      ?.supportedModels()
+      .then((models) => {
+        const result = {
+          models: models.map((m) => ({ id: m.value, displayName: m.displayName })),
+          current: this.model,
+        }
+        this.callbacks.onModels?.(result.models, result.current)
+        this.finishProbe(result)
+      })
+      .catch(() => {
+        // 旧 CLI 不支持：以"空目录 + 当前模型"收场，探测与缓存都走降级。
+        this.callbacks.onModels?.([], this.model)
+        this.finishProbe({ models: [], current: this.model })
+      })
+    this.callbacks.onSummary()
+  }
+
+  /** 活查询上直接取模型目录（host.models 的 live 级）；无活查询返回 null。 */
+  async tryLiveModels(): Promise<{ models: ModelInfoDto[]; current: string | null } | null> {
+    const q = this.currentQuery
+    if (!q) return null
+    try {
+      const models = await q.supportedModels()
+      return {
+        models: models.map((m) => ({ id: m.value, displayName: m.displayName })),
+        current: this.model,
+      }
+    } catch {
+      return null
+    }
+  }
+
+  // ---- model probe（host.models 冷路径，D4）---------------------------------
+
+  private probeFinish: ((r: { models: ModelInfoDto[]; current: string | null } | null) => void) | null =
+    null
+
+  private finishProbe(r: { models: ModelInfoDto[]; current: string | null } | null): void {
+    const finish = this.probeFinish
+    this.probeFinish = null
+    finish?.(r)
+  }
+
+  /**
+   * 开一个空查询（不发 prompt，CLI 启动即回 init）等模型目录，超时或
+   * CLI 不支持时返回 null / 空目录。仅由 manager 的探测会话使用。
+   */
+  async probeModels(
+    timeoutMs = 8000,
+  ): Promise<{ models: ModelInfoDto[]; current: string | null } | null> {
+    if (this.loopActive || this.disposed) return null
+    const pushable = new PushablePrompt()
+    const abort = new AbortController()
+    const options: Options = {
+      cwd: this.cwd,
+      resume: this.claudeSessionId ?? undefined,
+      model: this.model ?? undefined,
+      permissionMode: this.permissionMode,
+      abortController: abort,
+      canUseTool: this.canUseTool,
+      env: envWithEntrypoint(),
+    }
+    const probe = new Promise<{ models: ModelInfoDto[]; current: string | null } | null>(
+      (resolve) => {
+        this.probeFinish = resolve
+      },
+    )
+    this.loopActive = true
+    let queryObj: Query | null = null
+    try {
+      queryObj = query({ prompt: pushable, options })
+      this.currentQuery = queryObj
+      const timer = setTimeout(() => this.finishProbe(null), timeoutMs)
+      // 消费消息流直到 init 结果唤醒探测（或流自然结束）。
+      void (async () => {
+        try {
+          for await (const message of queryObj!) this.handleMessage(message)
+        } catch {
+          // CLI 启动失败等：按超时/空处理。
+        } finally {
+          this.finishProbe(null)
+        }
+      })()
+      const result = await probe
+      clearTimeout(timer)
+      return result
+    } finally {
+      this.probeFinish = null
+      abort.abort()
+      pushable.close()
+      this.currentQuery = null
+      this.loopActive = false
     }
   }
 
@@ -672,6 +819,11 @@ export class Session {
         if (item.status === 'denied') continue // phone's denial is the final word
         item.status = block.is_error ? 'error' : 'done'
         item.summary = summarizeToolContent(block.content, 400)
+        // 原始输出与回放同源（transcript-data-protocol D2）。
+        const extracted = extractToolResult(block.content)
+        item.resultText = extracted.resultText
+        item.resultTruncated = extracted.resultTruncated
+        item.resultImages = extracted.resultImages
         this.updateItem(item)
       }
       if (sawToolResult) return
@@ -687,6 +839,28 @@ export class Session {
     if (message.subtype !== 'success' && !this.currentAbort?.signal.aborted) {
       const detail = 'result' in message && typeof message.result === 'string' ? message.result : message.subtype
       this.addNotice('error', `Turn failed: ${detail}`)
+    }
+    // 用量与成本（transcript-data-protocol D3）：result 携带累计值，直接
+    // 取最新一份即可。旧 CLI 可能连 usage 对象都缺 —— 全链路可选访问，
+    // 任何缺失走零值降级，绝不让提取本身杀掉查询循环。
+    if (message.subtype === 'success') {
+      const u = message.usage ?? {
+        input_tokens: undefined,
+        output_tokens: undefined,
+        cache_creation_input_tokens: undefined,
+        cache_read_input_tokens: undefined,
+      }
+      const input = u.input_tokens ?? 0
+      const cacheRead = u.cache_read_input_tokens ?? 0
+      const cacheCreation = u.cache_creation_input_tokens ?? 0
+      this.usage = {
+        inputTokens: input,
+        outputTokens: u.output_tokens ?? 0,
+        cacheReadTokens: cacheRead,
+        cacheCreationTokens: cacheCreation,
+        contextTokens: input + cacheRead + cacheCreation,
+        costUsd: typeof message.total_cost_usd === 'number' ? message.total_cost_usd : 0,
+      }
     }
     // A turn finished and no work remains: end the query so pump() returns
     // the session to idle (and the next prompt starts a fresh resume).
@@ -721,8 +895,9 @@ export class Session {
     return item
   }
 
-  private addUserItem(text: string, source: UserItem['source']): void {
+  private addUserItem(text: string, source: UserItem['source'], attachments?: Attachment[]): void {
     const item: UserItem = { kind: 'user', id: randomUUID(), text, source, createdAt: Date.now() }
+    if (attachments && attachments.length > 0) item.attachments = attachments
     this.addItem(item)
   }
 
@@ -812,10 +987,25 @@ export class Session {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function userMessage(text: string, priority?: 'now' | 'next' | 'later'): SDKUserMessage {
+function userMessage(
+  text: string,
+  priority?: 'now' | 'next' | 'later',
+  attachments?: Attachment[],
+): SDKUserMessage {
+  // 有附件时 content 为块数组（文本块 + 图片块），否则保持纯字符串。
+  let content: SDKUserMessage['message']['content'] = text
+  if (attachments && attachments.length > 0) {
+    content = [
+      { type: 'text', text },
+      ...attachments.map((a) => ({
+        type: 'image' as const,
+        source: { type: 'base64' as const, media_type: a.mimeType, data: a.dataBase64 },
+      })),
+    ]
+  }
   const message: SDKUserMessage = {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
     parent_tool_use_id: null,
   }
   if (priority) message.priority = priority
@@ -825,8 +1015,13 @@ function userMessage(text: string, priority?: 'now' | 'next' | 'later'): SDKUser
 function userMessageText(message: Extract<SDKMessage, { type: 'user' }>): string | null {
   const content = message.message.content
   if (typeof content === 'string') return content
-  if (Array.isArray(content) && content.every((b) => b.type === 'text')) {
-    return content.map((b) => String((b as { text?: unknown }).text ?? '')).join('\n')
+  // 文本（+附件图）块：只取文本部分拼接 —— 混合块里 echo-guard 按文本
+  // 键比对，图片块不参与。其余块（tool_result 等）出现时返回 null。
+  if (Array.isArray(content) && content.every((b) => b.type === 'text' || b.type === 'image')) {
+    return content
+      .filter((b) => b.type === 'text')
+      .map((b) => String((b as { text?: unknown }).text ?? ''))
+      .join('\n')
   }
   return null
 }

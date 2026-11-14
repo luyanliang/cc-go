@@ -35,12 +35,33 @@ export type SendMode = z.infer<typeof SendMode>
 // Transcript items (what the phone renders)
 // ---------------------------------------------------------------------------
 
+/** Image mime types the Messages API accepts as base64 image blocks. */
+export const ImageMimeType = z.enum(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
+export type ImageMimeType = z.infer<typeof ImageMimeType>
+
+/** An image attachment travelling with a user message (compressed client-side). */
+export const Attachment = z.object({
+  name: z.string(),
+  mimeType: ImageMimeType,
+  dataBase64: z.string(),
+})
+export type Attachment = z.infer<typeof Attachment>
+
+/** An image returned by a tool (e.g. Read on an image file), bounded. */
+export const ToolResultImage = z.object({
+  mimeType: z.string(),
+  dataBase64: z.string(),
+})
+export type ToolResultImage = z.infer<typeof ToolResultImage>
+
 export const UserItem = z.object({
   kind: z.literal('user'),
   id: z.string(),
   text: z.string(),
   /** How this message entered the conversation (for UI styling). */
   source: z.enum(['phone', 'daemon']).default('phone'),
+  /** Images sent with this message, when any. */
+  attachments: z.array(Attachment).optional(),
   createdAt: z.number(),
 })
 export type UserItem = z.infer<typeof UserItem>
@@ -67,6 +88,12 @@ export const ToolItem = z.object({
   status: z.enum(['running', 'awaiting-permission', 'done', 'error', 'denied']),
   /** Short human-readable result summary, when available. */
   summary: z.string().optional(),
+  /** Full result text (newlines preserved), truncated at the cap below. */
+  resultText: z.string().optional(),
+  /** True when resultText was cut at the cap. */
+  resultTruncated: z.boolean().optional(),
+  /** Images in the result, bounded (count and size). */
+  resultImages: z.array(ToolResultImage).optional(),
   createdAt: z.number(),
 })
 export type ToolItem = z.infer<typeof ToolItem>
@@ -92,6 +119,19 @@ export type Item = z.infer<typeof Item>
 // Session descriptions (for the session list)
 // ---------------------------------------------------------------------------
 
+/** Token usage & cumulative cost of a session, from the latest turn's result. */
+export const SessionUsage = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheCreationTokens: z.number().int().nonnegative(),
+  /** input + cache_read + cache_creation — the context the next turn re-sends. */
+  contextTokens: z.number().int().nonnegative(),
+  /** Cumulative session cost in USD, as reported by Claude Code. */
+  costUsd: z.number(),
+})
+export type SessionUsage = z.infer<typeof SessionUsage>
+
 export const SessionSummary = z.object({
   id: z.string(),
   title: z.string(),
@@ -112,6 +152,8 @@ export const SessionSummary = z.object({
    *  keeps import idempotency and discovery's managed flag correct across
    *  forks. Null for created sessions. */
   originClaudeSessionId: z.string().nullable().default(null),
+  /** Usage & cost once at least one turn has finished; absent before that. */
+  usage: SessionUsage.optional(),
 })
 export type SessionSummary = z.infer<typeof SessionSummary>
 
@@ -196,7 +238,7 @@ export const SessionPromptParams = z.object({
   sessionId: z.string(),
   text: z.string().min(1),
   mode: SendMode.default('queue'),
-  attachments: z.array(z.object({ name: z.string(), mimeType: z.string(), dataBase64: z.string() })).optional(),
+  attachments: z.array(Attachment).max(4).optional(),
 })
 
 export const SessionConfigureParams = z.object({
@@ -275,6 +317,29 @@ export const SessionImportParams = z.object({
   title: z.string().optional(),
 })
 export const SessionImportResult = z.object({ summary: SessionSummary })
+
+// ---- Models & slash commands (transcript-data-protocol) ---------------------
+
+export const ModelInfoDto = z.object({
+  /** Model identifier to pass back via session.configure. */
+  id: z.string(),
+  displayName: z.string(),
+})
+export type ModelInfoDto = z.infer<typeof ModelInfoDto>
+
+export const HostModelsResult = z.object({
+  models: z.array(ModelInfoDto),
+  /** Current model when known (any live/recent session), else null. */
+  current: z.string().nullable(),
+})
+export type HostModelsResult = z.infer<typeof HostModelsResult>
+
+export const SessionCommandsParams = z.object({ sessionId: z.string() })
+export const SessionCommandsResult = z.object({
+  /** Slash command names without the leading slash, terminal-bound ones filtered. */
+  commands: z.array(z.object({ name: z.string(), description: z.string().optional() })),
+})
+export type SessionCommandsResult = z.infer<typeof SessionCommandsResult>
 
 /** Error codes used across the wire. */
 export const ErrorCodes = {

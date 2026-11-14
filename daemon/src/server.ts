@@ -36,6 +36,7 @@ import {
   PairRequest,
   PermissionRespondParams,
   ProjectsRegisterParams,
+  SessionCommandsParams,
   SessionConfigureParams,
   SessionCreateParams,
   SessionHistoryParams,
@@ -355,11 +356,27 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
         return {}
       }
 
+      case 'host.models': {
+        return manager.hostModels()
+      }
+
+      case 'session.commands': {
+        const parsed = SessionCommandsParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const session = requireSession(parsed.data.sessionId)
+        return {
+          commands: session.slashCommands.map((c) => ({
+            name: c.name,
+            ...(c.description != null ? { description: c.description } : {}),
+          })),
+        }
+      }
+
       case 'session.prompt': {
         const parsed = SessionPromptParams.safeParse(params)
         if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
         const session = requireSession(parsed.data.sessionId)
-        session.prompt(parsed.data.text, parsed.data.mode)
+        session.prompt(parsed.data.text, parsed.data.mode, parsed.data.attachments)
         return {}
       }
 

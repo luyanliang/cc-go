@@ -4,6 +4,25 @@ library;
 
 import 'session_models.dart';
 
+/// 用户消息携带的图片附件（transcript-data-protocol 2.4 回显用）。
+class TranscriptAttachment {
+  const TranscriptAttachment({
+    required this.name,
+    required this.mimeType,
+    required this.dataBase64,
+  });
+
+  factory TranscriptAttachment.fromJson(Map<String, dynamic> json) => TranscriptAttachment(
+        name: json['name'] as String? ?? 'image',
+        mimeType: json['mimeType'] as String? ?? 'image/jpeg',
+        dataBase64: json['dataBase64'] as String? ?? '',
+      );
+
+  final String name;
+  final String mimeType;
+  final String dataBase64;
+}
+
 /// 四种条目（protocol.ts 的 Item 判别联合）。用扁平字段 + kind 区分，
 /// 而非 sealed union：条目来自 JSON 且总是被整体替换，扁平模型让
 /// fromJson/缓存/widgets 都简单。
@@ -19,6 +38,10 @@ class TranscriptItem {
     this.toolInput,
     this.summary,
     this.level = 'info',
+    this.resultText,
+    this.resultTruncated = false,
+    this.resultImages = const [],
+    this.attachments = const [],
   });
 
   factory TranscriptItem.fromJson(Map<String, dynamic> json) {
@@ -38,6 +61,20 @@ class TranscriptItem {
       toolInput: json['input'] is Map<String, dynamic> ? json['input'] as Map<String, dynamic> : null,
       summary: json['summary'] as String?,
       level: json['level'] as String? ?? 'info',
+      resultText: json['resultText'] as String?,
+      resultTruncated: json['resultTruncated'] as bool? ?? false,
+      resultImages: [
+        if (json['resultImages'] is List)
+          for (final raw in json['resultImages'] as List)
+            if (raw is Map<String, dynamic>)
+              TranscriptAttachment.fromJson(raw),
+      ],
+      attachments: [
+        if (json['attachments'] is List)
+          for (final raw in json['attachments'] as List)
+            if (raw is Map<String, dynamic>)
+              TranscriptAttachment.fromJson(raw),
+      ],
     );
   }
 
@@ -63,6 +100,18 @@ class TranscriptItem {
 
   /// notice: info|warn|error。
   final String level;
+
+  /// tool 条目的完整结果文本（3.2 升级渲染用）。
+  final String? resultText;
+
+  /// resultText 是否被截断。
+  final bool resultTruncated;
+
+  /// tool 结果携带的图片（dataBase64）。
+  final List<TranscriptAttachment> resultImages;
+
+  /// user 条目的附件。
+  final List<TranscriptAttachment> attachments;
 
   bool get isStreamingAssistant =>
       kind == ItemKind.assistant && status == 'streaming';

@@ -4,10 +4,19 @@ library;
 
 import 'dart:async';
 
+import 'attachment.dart';
 import 'session_models.dart';
 import 'transcript.dart';
 import '../transport/host_link.dart';
 import '../transport/reconnecting_link.dart';
+
+/// 斜杠指令条目（session.commands 下发；名称不带前导斜杠）。
+class SlashCommand {
+  const SlashCommand({required this.name, this.description});
+
+  final String name;
+  final String? description;
+}
 
 /// 纯 Dart 控制器（ChangeNotifier 属 Flutter，会拖 dart:ui 进 CLI 工具）。
 /// UI 经 [changes] 流订阅重建；provider 装配在 chat_controller_provider.dart。
@@ -31,8 +40,8 @@ class ChatController {
   TranscriptState _transcript = const TranscriptState();
   TranscriptState get transcript => _transcript;
 
-  final List<String> _queuedTexts = [];
-  List<String> get queuedTexts => List.unmodifiable(_queuedTexts);
+  final List<_QueuedSend> _queued = [];
+  List<String> get queuedTexts => List.unmodifiable(_queued.map((q) => q.text));
 
   bool _busy = false;
   bool get busy => _busy;
@@ -62,23 +71,27 @@ class ChatController {
     // 排队消息只存手机侧：phase running→idle 边沿时逐条送出。
     if (wasRunning && next.phase == SessionPhase.idle) {
       unawaited(_dispatchNextQueued());
+      // 轮次结束 = 本轮 init 已发生：顺手刷新指令目录（新技能可能出现）。
+      unawaited(loadSlashCommands());
     }
     _notify();
   }
 
   /// 发送：空闲直接开新轮；运行中仅入队显示（不打扰当前轮）。
-  Future<void> send(String text) async {
+  /// 附件（若有）与文本同条消息送出。
+  Future<void> send(String text, {List<PendingAttachment> attachments = const []}) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty || link == null || _busy) return;
+    final wire = [for (final a in attachments.take(kAttachmentMaxCount)) a.toWire()];
     if (running) {
-      _queuedTexts.add(trimmed);
+      _queued.add(_QueuedSend(trimmed, wire));
       _notify();
       return;
     }
     _busy = true;
     _notify();
     try {
-      await _prompt(trimmed);
+      await _prompt(trimmed, wire);
     } finally {
       _busy = false;
       _notify();
@@ -87,13 +100,13 @@ class ChatController {
 
   /// 逐条送出（每次 idle 边沿只送一条，保持"停止即停"的控制感）。
   Future<void> _dispatchNextQueued() async {
-    if (_busy || _queuedTexts.isEmpty || link == null) return;
-    final text = _queuedTexts.first;
+    if (_busy || _queued.isEmpty || link == null) return;
+    final next = _queued.first;
     _busy = true;
     _notify();
     try {
-      await _prompt(text);
-      _queuedTexts.remove(text); // daemon 已接受，user 条目随后到达
+      await _prompt(next.text, next.wire);
+      _queued.removeAt(0); // daemon 已接受，user 条目随后到达
     } on Object {
       // 保留在队列里，等下一个 idle 边沿重试
     } finally {
@@ -102,11 +115,12 @@ class ChatController {
     }
   }
 
-  Future<void> _prompt(String text) {
+  Future<void> _prompt(String text, [List<Map<String, dynamic>> attachments = const []]) {
     return link!.call('session.prompt', {
       'sessionId': sessionId,
       'text': text,
       'mode': 'queue',
+      if (attachments.isNotEmpty) 'attachments': attachments,
     });
   }
 
@@ -120,6 +134,45 @@ class ChatController {
     } on Object {
       // 掉线时打断送不出去；重连后 phase 快照会带回真实状态。
     }
+  }
+
+  /// 斜杠指令目录（session.commands：init 捕获、终端专属已过滤）。
+  /// 打开会话时取一次；daemon 侧随每次 init 保持新鲜。
+  List<SlashCommand> _slashCommands = const [];
+  List<SlashCommand> get slashCommands => _slashCommands;
+
+  Future<void> loadSlashCommands() async {
+    if (link == null) return;
+    try {
+      final raw = await link!.call('session.commands', {'sessionId': sessionId})
+          as Map<String, dynamic>;
+      _slashCommands = [
+        for (final c in (raw['commands'] as List<dynamic>? ?? <dynamic>[]))
+          if (c is Map<String, dynamic> && c['name'] is String)
+            SlashCommand(
+              name: c['name'] as String,
+              description: c['description'] as String?,
+            ),
+      ];
+    } on Object {
+      _slashCommands = const []; // 旧 daemon：不出面板
+    }
+    _notify();
+  }
+
+  /// 拉取模型目录（host.models：缓存 → 活查询 → 探测 → 空）。
+  Future<Map<String, dynamic>> models() async {
+    if (link == null) return {'models': <dynamic>[], 'current': null};
+    return await link!.call('host.models', {}) as Map<String, dynamic>;
+  }
+
+  /// 切换模型（经既有 session.configure，摘要随后回显）。
+  Future<void> configureModel(String model) async {
+    if (link == null) return;
+    await link!.call('session.configure', {
+      'sessionId': sessionId,
+      'model': model,
+    });
   }
 
   /// 应答权限请求（task 7.1）：允许/拒绝，可勾选本会话同类工具免问。
@@ -140,8 +193,16 @@ class ChatController {
 
   /// 清空本地排队显示（打断后 daemon 丢弃队列，快照不会含它们）。
   void clearQueued() {
-    if (_queuedTexts.isEmpty) return;
-    _queuedTexts.clear();
+    if (_queued.isEmpty) return;
+    _queued.clear();
     _notify();
   }
+}
+
+/// 运行中排队的完整发送（文本 + 附件载荷），单一记录防两个平行列表失步。
+class _QueuedSend {
+  const _QueuedSend(this.text, this.wire);
+
+  final String text;
+  final List<Map<String, dynamic>> wire;
 }

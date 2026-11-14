@@ -3,6 +3,39 @@ library;
 
 enum SessionPhase { idle, running, awaitingPermission }
 
+/// 会话用量与成本（transcript-data-protocol D3）：来自最近一次完成的
+/// 回合，成本为会话累计。
+class SessionUsage {
+  const SessionUsage({
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.cacheReadTokens,
+    required this.cacheCreationTokens,
+    required this.contextTokens,
+    required this.costUsd,
+  });
+
+  factory SessionUsage.fromJson(Map<String, dynamic> json) => SessionUsage(
+        inputTokens: (json['inputTokens'] as num).toInt(),
+        outputTokens: (json['outputTokens'] as num).toInt(),
+        cacheReadTokens: (json['cacheReadTokens'] as num).toInt(),
+        cacheCreationTokens: (json['cacheCreationTokens'] as num).toInt(),
+        contextTokens: (json['contextTokens'] as num).toInt(),
+        costUsd: (json['costUsd'] as num).toDouble(),
+      );
+
+  final int inputTokens;
+  final int outputTokens;
+  final int cacheReadTokens;
+  final int cacheCreationTokens;
+
+  /// 下一轮要重发的上下文量级（input + cache read + cache creation）。
+  final int contextTokens;
+
+  /// 会话累计成本（美元，Claude Code 估算值）。
+  final double costUsd;
+}
+
 class SessionSummary {
   const SessionSummary({
     required this.id,
@@ -15,6 +48,7 @@ class SessionSummary {
     this.model,
     this.permissionMode = 'default',
     this.origin = 'created',
+    this.usage,
   });
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) {
@@ -33,6 +67,9 @@ class SessionSummary {
       model: json['model'] as String?,
       permissionMode: json['permissionMode'] as String? ?? 'default',
       origin: json['origin'] as String? ?? 'created',
+      usage: json['usage'] is Map<String, dynamic>
+          ? SessionUsage.fromJson(json['usage'] as Map<String, dynamic>)
+          : null,
     );
   }
 
@@ -49,6 +86,9 @@ class SessionSummary {
   /// 会话来源（protocol.ts `origin`）：手机/daemon 创建，或从 Claude Code
   /// 历史会话导入接管。
   final String origin;
+
+  /// 用量与成本；首回合完成前为 null。
+  final SessionUsage? usage;
 
   bool get imported => origin == 'imported';
 
