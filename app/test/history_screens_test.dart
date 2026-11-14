@@ -14,7 +14,7 @@ import 'package:cc_go/notify/foreground_link.dart';
 import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
 import 'package:cc_go/state/app_link_provider.dart';
-import 'package:cc_go/state/credentials.dart';
+import 'package:cc_go/state/host_entry.dart';
 import 'package:cc_go/state/providers.dart';
 import 'package:cc_go/transport/host_link.dart';
 
@@ -110,20 +110,22 @@ Map<String, dynamic> _discovered(
     };
 
 class Harness {
-  final store = MemoryCredentialStore();
+  final entryStore = MemoryHostEntryStore();
   final fake = FakeDaemonLink();
 
   Widget boot() {
-    store.write(const HostCredentials(
+    entryStore.save(const HostEntry(
+      id: 'default',
+      mode: ConnectionMode.direct,
+      hostName: 'desk',
       host: '203.0.113.7',
       port: 8747,
       token: 'tok',
       fingerprint: 'AA:BB',
-      hostName: 'desk',
     ));
     return ProviderScope(
       overrides: [
-        credentialStoreProvider.overrideWithValue(store),
+        hostEntryStoreProvider.overrideWithValue(entryStore),
         appNotifierProvider.overrideWithValue(_FakeAppNotifier()),
         foregroundLinkProvider.overrideWithValue(_FakeForegroundLink()),
         appLinkFactoryProvider.overrideWithValue(

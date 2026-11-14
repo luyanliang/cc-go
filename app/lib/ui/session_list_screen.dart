@@ -7,9 +7,9 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../state/host_entry.dart'
-import '../state/project_models.dart'
-import '../state/projects.dart'
+import '../state/host_entry.dart';
+import '../state/project_models.dart';
+import '../state/projects.dart';
 import '../state/providers.dart';
 import '../state/session_models.dart';
 import '../state/sessions.dart';
@@ -19,8 +19,8 @@ import '../state/app_link.dart';
 import '../state/app_link_provider.dart';
 import 'chat/chat_screen.dart';
 import 'debug_events_screen.dart';
-import 'history/project_history_screen.dart'
-import 'host_list_screen.dart'
+import 'history/project_history_screen.dart';
+import 'host_list_screen.dart';
 
 class SessionListScreen extends ConsumerWidget {
   const SessionListScreen({super.key});
