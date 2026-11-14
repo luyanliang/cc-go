@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 CC-Go lets an Android phone remotely control Claude Code running on the user's computer: the phone pairs with a daemon over TLS WebSocket, then creates/watches/prompts Claude Code sessions and answers permission requests from the chat UI. The SSH tunnel is planned for M4.
 
 - `daemon/` — the PC side (Node.js/TypeScript): pairing, TLS, authenticated WebSocket, session management.
-- `app/` — the Android client (Flutter, `dev.luke.cc_go`, minSdk 26): pairing, sessions, chat, permission UI, reconnect, and notification implementation. Background behavior still needs the device checks in `docs/VERIFICATION.md`.
+- `app/` — the Android client (Flutter, `dev.luke.cc_go`, minSdk 26): pairing (manual / QR / mDNS discovery), multi-host management, direct + SSH-tunnel connections, sessions, chat, permission UI, reconnect, and notification implementation.
 - `reference/` — **read-only** third-party codebases kept for pattern reference: `dsh-Go` (Flutter chat-UI patterns) and `happy-main` (happy-cli — driving Claude Code via the Agent SDK). `docs/ARCHITECTURE.md` maps which techniques come from which project.
 - `docs/ARCHITECTURE.md` (written in Chinese) — authoritative design doc: architecture diagram, confirmed decisions, milestones M1–M4.
 - `openspec/` — spec-driven change management via the `openspec-*` skills. The task checkboxes are the acceptance record; do not check an item merely because code exists.
@@ -79,6 +79,12 @@ Four layers, one direction of dependency: `server.ts` → `agent/manager.ts` →
 - **`src/store.ts`** — single `~/.cc-go/store.json` (atomic tmp+rename, mode 0600): daemon id/name, paired device tokens, session summaries.
 - **`src/tls.ts`** — self-signed certificate lifecycle: generated on first run (`selfsigned`, ECDSA P-256), persisted in `~/.cc-go/`, reused across restarts; exposes the openssl-style SHA-256 fingerprint clients pin (TOFU).
 - **`src/discovery.ts`** — mDNS advertisement (`bonjour-service`, `_ccgo._tcp`, fingerprint in TXT) started by `server.ts` only in LAN+TLS mode; stopped when the server closes.
+
+## App architecture notes
+
+- Transport: `lib/transport/host_link.dart` (`HostLinkBase` — one authed TLS WebSocket) wrapped by `ReconnectingHostLink` (exponential backoff, re-hello + re-watch on reconnect). `tofu.dart` pins the daemon cert fingerprint per host.
+- SSH mode: `lib/transport/ssh/ssh_tunnel_link.dart` — dartssh2 connects, opens a `forwardLocal` direct-tcpip channel up front (forward-refused surfaces as a typed error from `connect`), bridges a local `127.0.0.1` ephemeral `ServerSocket` to it, and `HostLink` dials `wss://127.0.0.1:<port>/ws` — TLS + cert TOFU reuse unchanged. WS drop tears the tunnel down (the reconnecting wrapper does not close old links). SSH host-key fingerprints (`SHA256:<base64>`, case-sensitive) live in a separate `FingerprintStore` from the daemon cert pins.
+- Hosts: `lib/state/host_entry.dart` — multi-host list (`host_entries_v2`), legacy single-host storage auto-migrated; SSH secrets (password/key PEM, never the passphrase) in a dedicated secure-storage channel keyed by entry id.
 
 ## Conventions
 
