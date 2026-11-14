@@ -12,6 +12,8 @@ pluginManagement {
 
     repositories {
         google()
+        // Maven Central direct connections are unreliable on this network; mirror first.
+        maven("https://maven.aliyun.com/repository/public")
         mavenCentral()
         gradlePluginPortal()
     }
