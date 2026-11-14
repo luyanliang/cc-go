@@ -4,7 +4,7 @@
  * WebSocket methods — whitelist rejection included (task 3.1/3.2).
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -18,7 +18,9 @@ const dirs: string[] = []
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'ccgo-server-test-'))
   dirs.push(dir)
-  return dir
+  // macOS 上 /tmp 是 /private/tmp 的符号链接：项目注册会 realpath 规范化，
+  // 返回真实路径让测试内所有比对（p.path、encodeCwd）与之一致。
+  return realpathSync(dir)
 }
 
 const SID = 'abcdefab-cdef-4abc-8abc-222222222222'
