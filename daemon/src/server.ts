@@ -42,6 +42,7 @@ import {
 } from './protocol.js'
 import type { Store } from './store.js'
 import type { SessionManager } from './agent/manager.js'
+import { startDiscovery, type DiscoveryHandle } from './discovery.js'
 
 interface AuthedConnection {
   socket: WebSocket
@@ -285,6 +286,16 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
 
   server.listen(opts.port, opts.bindLan ? '0.0.0.0' : '127.0.0.1', () => {
     printBanner(opts, store)
+    // mDNS discovery only makes sense for LAN pairing with a pin-able cert;
+    // --localhost (SSH tunnel) and --no-tls (plaintext dev) never advertise.
+    if (opts.bindLan && opts.tls) {
+      const discovery = startDiscovery({
+        name: store.daemonName,
+        port: opts.port,
+        fingerprint: opts.tls.fingerprint,
+      })
+      server.on('close', () => discovery.stop())
+    }
   })
 
   return server
@@ -343,6 +354,22 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB)
 }
 
+/** QR pairing payload — the phone app's scanner parses this shape (`ccgo://pair`). */
+export function pairingQrPayload(opts: {
+  host: string
+  port: number
+  pairingCode: string
+  fingerprint?: string
+}): string {
+  const params = new URLSearchParams({
+    host: opts.host,
+    port: String(opts.port),
+    code: opts.pairingCode,
+  })
+  if (opts.fingerprint) params.set('fingerprint', opts.fingerprint)
+  return `ccgo://pair?${params.toString()}`
+}
+
 function printBanner(opts: DaemonOptions, store: Store): void {
   const scheme = opts.tls ? 'wss' : 'ws'
   const bind = opts.bindLan ? '0.0.0.0 (LAN)' : '127.0.0.1 (local only)'
@@ -357,9 +384,15 @@ function printBanner(opts: DaemonOptions, store: Store): void {
     console.log('            (verify once on first pairing — clients pin it automatically)\n')
   }
   const primary = urls[0] ?? ''
-  const qrPayload = `ccgo://${primary.replace(`${scheme}://`, '')}?code=${opts.pairingCode}`
+  const host = primary.replace(`${scheme}://`, '').split(':')[0] ?? ''
+  const qrPayload = pairingQrPayload({
+    host,
+    port: opts.port,
+    pairingCode: opts.pairingCode,
+    fingerprint: opts.tls?.fingerprint,
+  })
   qrcode.generate(qrPayload, { small: true }, (code) => console.log(code))
-  console.log(`  scan QR or enter in the app:  ${primary}  code ${opts.pairingCode}\n`)
+  console.log(`  scan QR or enter in the app:  ${primary}  code ${opts.pairingCode}`)
 }
 
 function lanAddresses(): string[] {

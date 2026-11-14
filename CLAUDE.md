@@ -34,6 +34,7 @@ node bin/cc-go.mjs [--port 8747] [--localhost] [--name <name>] [--code <code>] [
 
 - All endpoints (HTTP + WebSocket) are served over **TLS by default** (`https`/`wss`): a self-signed ECDSA P-256 certificate is generated on first run into `~/.cc-go/tls-{cert,key}.pem` and reused. Startup prints its SHA-256 fingerprint next to the pairing code — clients pin it on first connection (TOFU) and fail closed if it changes.
 - `--localhost` binds 127.0.0.1 (SSH-tunnel mode); default binds 0.0.0.0. `--no-tls` is a plaintext dev mode that forces loopback binding.
+- **LAN discovery & QR pairing** (`src/discovery.ts`): in default (LAN + TLS) mode the daemon advertises `_ccgo._tcp` over mDNS with its cert fingerprint in the TXT record, and the startup banner prints a `ccgo://pair?host=…&port=…&code=…&fingerprint=…` QR code (built by `pairingQrPayload` in `server.ts`). `--localhost` and `--no-tls` never advertise; the QR carries no fingerprint in plaintext mode.
 - Requires the `claude` CLI on PATH and authenticated — the Agent SDK spawns it for every session.
 
 ### Smoke test (end-to-end, plays the phone)
@@ -77,6 +78,7 @@ Four layers, one direction of dependency: `server.ts` → `agent/manager.ts` →
   - Sets `CLAUDE_CODE_ENTRYPOINT=cc-go` so daemon sessions stay visible in `claude --resume`.
 - **`src/store.ts`** — single `~/.cc-go/store.json` (atomic tmp+rename, mode 0600): daemon id/name, paired device tokens, session summaries.
 - **`src/tls.ts`** — self-signed certificate lifecycle: generated on first run (`selfsigned`, ECDSA P-256), persisted in `~/.cc-go/`, reused across restarts; exposes the openssl-style SHA-256 fingerprint clients pin (TOFU).
+- **`src/discovery.ts`** — mDNS advertisement (`bonjour-service`, `_ccgo._tcp`, fingerprint in TXT) started by `server.ts` only in LAN+TLS mode; stopped when the server closes.
 
 ## Conventions
 
