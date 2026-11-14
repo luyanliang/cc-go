@@ -73,6 +73,14 @@ void main() {
     expect(project.name, 'newproj');
   });
 
+  test('projects.unregister：params 带原始 path，解析 removed', () async {
+    caller.results['projects.unregister'] = (p) async => {'removed': true};
+    final removed = await api.unregisterProject('/home/luke/work/cc-go');
+    expect(caller.calls.single.$1, 'projects.unregister');
+    expect(caller.calls.single.$2, {'path': '/home/luke/work/cc-go'});
+    expect(removed, isTrue);
+  });
+
   test('sessions.discover：params 带 cwd，解析 DiscoveredSession 全字段', () async {
     caller.results['sessions.discover'] = (_) async => {
           'sessions': [

@@ -276,6 +276,9 @@ export type ProjectsListResult = z.infer<typeof ProjectsListResult>
 export const ProjectsRegisterParams = z.object({ path: z.string().min(1) })
 export const ProjectsRegisterResult = z.object({ project: ProjectInfo })
 
+export const ProjectsUnregisterParams = z.object({ path: z.string().min(1) })
+export const ProjectsUnregisterResult = z.object({ removed: z.boolean() })
+
 export const DiscoveredSession = z.object({
   /** Claude Code's own session id (the .jsonl filename stem). */
   claudeSessionId: z.string(),

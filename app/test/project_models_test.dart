@@ -61,6 +61,22 @@ void main() {
       expect(groups.last.sessions, isEmpty);
     });
 
+    test('未注册且无会话的兜底组隐藏（session-group-interactions）', () {
+      final groups = groupSessionsByProject(
+        [_project('/w/used')],
+        [
+          _session('u1', '/w/used'),
+          _session('orphan1', '/w/orphan-with-sessions'),
+        ],
+      );
+      // 未注册但有会话 → 保留；未注册且无会话 → 不产生该组。
+      expect(groups.singleWhere((g) => g.name == 'orphan-with-sessions').sessions,
+          isNotEmpty);
+      expect(groups.where((g) => g.name == 'some-empty-orphan'), isEmpty);
+      expect(groups.any((g) => !g.registered && g.sessions.isEmpty), isFalse,
+          reason: '未注册空组不得出现在结果里');
+    });
+
     test('失效项目照常成组，available=false 交给 UI 置灰', () {
       final groups = groupSessionsByProject(
         [_project('/gone', available: false)],

@@ -1,4 +1,11 @@
 # --- daemon (Node/TS) ---
+# Node
+node_modules/
+
+# Vitest caches (stray root-level runs)
+.vite/
+.vitest-cache/
+
 daemon/node_modules/
 daemon/dist/
 

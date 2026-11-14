@@ -149,6 +149,37 @@ describe('multi-project RPC surface', () => {
     }
   })
 
+  it('unregisters a project idempotently via projects.unregister', async () => {
+    const ws = await openSocket()
+    expect((await rpc(ws, 'uh', 'hello', { token })).ok).toBe(true)
+    try {
+      // 注册 → 注销：list 不再包含，重复注销返回 removed:false 不报错。
+      await rpc(ws, 'u0', 'projects.register', { path: foreignDir })
+      const unreg = await rpc(ws, 'u1', 'projects.unregister', { path: foreignDir })
+      expect((unreg.result as { removed: boolean }).removed).toBe(true)
+      const list = await rpc(ws, 'u2', 'projects.list', {})
+      const paths = (list.result as { projects: Array<Record<string, unknown>> }).projects
+        .map((p) => p.path)
+      expect(paths).not.toContain(foreignDir)
+
+      const repeat = await rpc(ws, 'u3', 'projects.unregister', { path: foreignDir })
+      expect((repeat.result as { removed: boolean }).removed).toBe(false)
+
+      // 注销后该目录即被白名单拦下（不可 discover）。
+      const denied = await rpc(ws, 'u4', 'sessions.discover', { cwd: foreignDir })
+      expect(denied.ok).toBe(false)
+    } finally {
+      ws.close()
+    }
+
+    // 未认证（未 hello）连接直接被服务端以 4003 掐断，方法根本不会执行。
+    const rogue = await openSocket()
+    const closed = new Promise<number>((resolve) => rogue.once('close', (code) => resolve(code)))
+    rpc(rogue, 'ux', 'projects.unregister', { path: foreignDir }).catch(() => {})
+    expect(await closed).toBe(4003)
+    rogue.close()
+  })
+
   it('discovers, replays and imports sessions in a registered project', async () => {
     const ws = await openSocket()
     try {
