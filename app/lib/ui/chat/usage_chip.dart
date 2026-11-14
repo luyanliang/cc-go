@@ -5,6 +5,7 @@ library;
 import 'package:material_ui/material_ui.dart';
 
 import '../../state/session_models.dart';
+import '../widgets/pill_badge.dart';
 
 /// '123' / '1.2k' / '43k' / '1.05m' —— 与上下文窗口报价同一套单位。
 String formatTokens(int n) {
@@ -30,19 +31,8 @@ class UsageChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.6),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        '${formatCost(usage.costUsd)} · ${formatTokens(usage.contextTokens)} ctx',
-        style: theme.textTheme.labelSmall?.copyWith(
-          color: theme.colorScheme.onSecondaryContainer,
-        ),
-      ),
+    return PillBadge(
+      '${formatCost(usage.costUsd)} · ${formatTokens(usage.contextTokens)} ctx',
     );
   }
 }

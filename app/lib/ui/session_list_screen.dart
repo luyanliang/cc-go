@@ -22,6 +22,9 @@ import 'chat/chat_screen.dart';
 import 'debug_events_screen.dart';
 import 'history/project_history_screen.dart';
 import 'host_list_screen.dart';
+import 'theme/app_style.dart';
+import 'widgets/pill_badge.dart';
+import 'widgets/sheet_header.dart';
 
 class SessionListScreen extends ConsumerStatefulWidget {
   const SessionListScreen({super.key});
@@ -99,17 +102,17 @@ class _SessionListScreenState extends ConsumerState<SessionListScreen> {
                 }
                 return Container(
                   width: double.infinity,
-                  color: Colors.orange.withValues(alpha: 0.15),
+                  color: AppColors.warning.withValues(alpha: 0.15),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   child: const Row(
                     children: [
-                      Icon(Icons.cloud_off_outlined, size: 16, color: Colors.orange),
+                      Icon(Icons.cloud_off_outlined, size: 16, color: AppColors.warning),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           '未连接电脑，正在重试…',
-                          style: TextStyle(color: Colors.orange, fontSize: 13),
+                          style: TextStyle(color: AppColors.warning, fontSize: 13),
                         ),
                       ),
                     ],
@@ -251,11 +254,7 @@ class _SessionListScreenState extends ConsumerState<SessionListScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text('选择项目目录',
-                  style: Theme.of(sheetContext).textTheme.titleMedium),
-            ),
+            const SheetHeader('选择项目目录'),
             for (final project in projects)
               ListTile(
                 key: ValueKey('pick-project-${project.path}'),
@@ -311,7 +310,9 @@ class _ConnectionChip extends ConsumerWidget {
               ? Icons.cloud_done_outlined
               : Icons.cloud_sync_outlined,
           size: 18,
-          color: snapshot.data == LinkState.connected ? Colors.green : Colors.orange,
+          color: snapshot.data == LinkState.connected
+              ? AppColors.success
+              : AppColors.warning,
         ),
       ),
     );
@@ -371,15 +372,10 @@ class _GroupHeader extends StatelessWidget {
           ),
           if (!group.available) ...[
             const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: theme.disabledColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text('目录不存在',
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: theme.disabledColor)),
+            PillBadge.tinted(
+              '目录不存在',
+              color: theme.disabledColor.withValues(alpha: 0.15),
+              onColor: theme.disabledColor,
             ),
           ],
         ],
@@ -445,7 +441,7 @@ class _SessionTile extends StatelessWidget {
           ),
           if (session.imported) ...[
             const SizedBox(width: 6),
-            _OriginBadge(imported: true),
+            const PillBadge('导入'),
           ],
         ],
       ),
@@ -466,30 +462,6 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-/// 来源标识：导入接管的历史会话（spec phone-client "来源"）。
-class _OriginBadge extends StatelessWidget {
-  const _OriginBadge({required this.imported});
-
-  final bool imported;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        '导入',
-        style: theme.textTheme.labelSmall
-            ?.copyWith(color: theme.colorScheme.onSecondaryContainer),
-      ),
-    );
-  }
-}
-
 /// 状态徽标：待权限金色（task 5.3）。
 class _PhaseBadge extends StatelessWidget {
   const _PhaseBadge({required this.phase});
@@ -498,11 +470,11 @@ class _PhaseBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (icon, color) = switch (phase) {
-      SessionPhase.idle => (Icons.check_circle_outline, Colors.grey),
-      SessionPhase.running => (Icons.play_circle_outline, Colors.blue),
-      SessionPhase.awaitingPermission => (Icons.lock_clock, Colors.amber),
+    final status = switch (phase) {
+      SessionPhase.idle => AppStatus.neutral,
+      SessionPhase.running => AppStatus.active,
+      SessionPhase.awaitingPermission => AppStatus.waiting,
     };
-    return Icon(icon, color: color);
+    return Icon(status.icon, color: status.color);
   }
 }

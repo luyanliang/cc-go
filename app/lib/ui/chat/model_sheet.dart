@@ -4,6 +4,8 @@ library;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../widgets/sheet_header.dart';
+
 class ModelEntry {
   const ModelEntry({required this.id, required this.displayName});
 
@@ -75,10 +77,7 @@ class _ModelSheetState extends State<_ModelSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Text('选择模型', style: Theme.of(context).textTheme.titleMedium),
-          ),
+          const SheetHeader('选择模型'),
           Flexible(
             child: FutureBuilder<ModelCatalog>(
               future: _future,

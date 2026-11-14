@@ -14,6 +14,7 @@ import 'chat_rows.dart';
 import 'composer.dart';
 import 'model_sheet.dart';
 import 'usage_chip.dart';
+import '../widgets/pill_badge.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.sessionId, required this.title});
@@ -163,7 +164,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   const SizedBox(width: 6),
                   // 模型 chip（task 4.3）：点开选择面板；当前模型为空时显示占位。
                   InkWell(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(8),
                     onTap: () => showModelSheet(
                       context,
                       loader: () async {
@@ -181,22 +182,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                       currentModel: s.model,
                       onApply: (model) => controller.configureModel(model),
                     ),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            s.model ?? '模型',
-                            style: Theme.of(context).textTheme.labelSmall,
-                          ),
-                          const Icon(Icons.arrow_drop_down, size: 16),
-                        ],
-                      ),
+                    child: PillBadge.tinted(
+                      s.model ?? '模型',
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      onColor: Theme.of(context).colorScheme.onSurface,
+                      icon: Icons.arrow_drop_down,
                     ),
                   ),
                   if (s.usage case final usage?) ...[

@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../state/attachment.dart';
 import '../../state/chat_controller.dart' show SlashCommand;
+import '../theme/app_style.dart';
 
 /// 待发附件的完整行为（选图 → 压缩）；测试注入假实现。
 typedef AttachmentPicker = Future<PendingAttachment?> Function();
@@ -204,7 +205,7 @@ class _SlashPalette extends StatelessWidget {
               return ListTile(
                 dense: true,
                 visualDensity: VisualDensity.compact,
-                title: Text('/${command.name}', style: const TextStyle(fontFamily: 'monospace')),
+                title: Text('/${command.name}', style: AppMono.code),
                 subtitle: command.description == null
                     ? null
                     : Text(

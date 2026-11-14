@@ -8,6 +8,8 @@ import 'package:material_ui/material_ui.dart';
 import '../../state/transcript.dart';
 import 'render/ansi.dart';
 import 'render/diff.dart';
+import '../theme/app_style.dart';
+import '../widgets/mono_block.dart';
 
 /// 单工具展开内容视图的构建器；返回 null 表示"本条没有可画的内容"，
 /// 调用方回退通用展示。
@@ -70,29 +72,6 @@ String? _patternPath(TranscriptItem item, String patternKey) {
 // 通用小件
 // ---------------------------------------------------------------------------
 
-/// 等宽内容块（命令 / 路径等键值对）。
-class _MonoBlock extends StatelessWidget {
-  const _MonoBlock(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        text,
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      ),
-    );
-  }
-}
-
 /// 标签 + 值的紧凑行。
 class _FieldRow extends StatelessWidget {
   const _FieldRow(this.label, this.value);
@@ -145,7 +124,7 @@ Widget buildBashToolView(TranscriptItem item) {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const _SectionLabel('命令'),
-      _MonoBlock(command is String ? command : ''),
+      MonoBlock.text(command is String ? command : ''),
       const SizedBox(height: 6),
       if (output != null) ...[
         const _SectionLabel('输出'),
@@ -169,21 +148,15 @@ class _AnsiOutputView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
+    return MonoBlock(
       constraints: const BoxConstraints(maxHeight: 320),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SelectableText.rich(
               TextSpan(
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12, height: 1.4),
+                style: AppMono.denseLoose,
                 children: parseAnsiSpans(text),
               ),
             ),
@@ -286,13 +259,7 @@ class DiffView extends StatelessWidget {
     final shown = lines.length > kDiffViewMaxLines ? lines.sublist(0, kDiffViewMaxLines) : lines;
     final adds = lines.where((l) => l.kind == DiffLineKind.add).length;
     final removes = lines.where((l) => l.kind == DiffLineKind.remove).length;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return MonoBlock(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -301,12 +268,10 @@ class DiffView extends StatelessWidget {
           for (final line in shown)
             Text(
               '${line.kind == DiffLineKind.add ? '+' : line.kind == DiffLineKind.remove ? '−' : ' '} ${line.text}',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
+              style: AppMono.dense.copyWith(
                 color: switch (line.kind) {
-                  DiffLineKind.add => Colors.green.shade800,
-                  DiffLineKind.remove => Colors.red.shade800,
+                  DiffLineKind.add => AppColors.successOnTint,
+                  DiffLineKind.remove => AppColors.errorOnTint,
                   DiffLineKind.same => Theme.of(context).colorScheme.onSurfaceVariant,
                 },
               ),
@@ -371,7 +336,7 @@ Widget buildWriteToolView(TranscriptItem item) {
           padding: EdgeInsets.only(top: 4),
           child: Text(
             '… 内容超长，仅显示前 200 行',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+            style: TextStyle(fontSize: 11, color: AppColors.neutral),
           ),
         ),
     ],
@@ -395,9 +360,9 @@ Widget? buildTodoToolView(TranscriptItem item) {
     if (content is! String) continue;
     final status = raw['status'];
     final (icon, color) = switch (status) {
-      'completed' => (Icons.check_circle, Colors.green),
-      'in_progress' => (Icons.play_circle, Colors.blue),
-      _ => (Icons.radio_button_unchecked, Colors.grey),
+      'completed' => AppStatus.success.visual,
+      'in_progress' => AppStatus.active.visual,
+      _ => (Icons.radio_button_unchecked, AppColors.neutral),
     };
     rows.add(Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),

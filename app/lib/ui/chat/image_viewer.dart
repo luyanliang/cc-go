@@ -11,6 +11,8 @@ Future<void> showAttachmentFullScreen(BuildContext context, TranscriptAttachment
   return showDialog<void>(
     context: context,
     builder: (dialogContext) => Dialog.fullscreen(
+      // 黑底白叉是看图器自带的暗色 chrome，不走 AppColors 语义层
+      //（app_style.dart 规则的局部例外）。
       backgroundColor: Colors.black87,
       child: Stack(
         children: [

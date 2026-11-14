@@ -135,8 +135,10 @@ void main() {
     expect(find.text('调研方案'), findsOneWidget);
     expect(find.text('写实现'), findsOneWidget);
     expect(find.text('补测试'), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
-    expect(find.byIcon(Icons.play_circle), findsOneWidget);
+    // 工具行 done 与 todo completed 统一为同一字形（AppStatus.success）。
+    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    // in_progress 用 AppStatus.active 的统一字形（与会话列表 running 一致）。
+    expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
     expect(find.byIcon(Icons.radio_button_unchecked), findsOneWidget);
   });
 

@@ -10,6 +10,7 @@ import '../../state/history_api.dart';
 import '../../state/project_models.dart';
 import '../../state/session_models.dart';
 import '../chat/chat_screen.dart';
+import '../widgets/pill_badge.dart';
 import 'history_chat_screen.dart';
 
 class ProjectHistoryScreen extends ConsumerWidget {
@@ -87,17 +88,10 @@ class _DiscoveredTile extends StatelessWidget {
         '${session.messageCount} 条消息 · ${relativeTime(session.lastActiveAt, DateTime.now())}',
       ),
       trailing: session.managed
-          ? Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text(
-                '已托管',
-                style: theme.textTheme.labelSmall
-                    ?.copyWith(color: theme.colorScheme.onPrimaryContainer),
-              ),
+          ? PillBadge.tinted(
+              '已托管',
+              color: theme.colorScheme.primaryContainer,
+              onColor: theme.colorScheme.onPrimaryContainer,
             )
           : null,
       onTap: () {

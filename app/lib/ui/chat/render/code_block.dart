@@ -39,6 +39,7 @@ import 'package:re_highlight/re_highlight.dart';
 import 'package:re_highlight/styles/github-dark.dart';
 
 import 'copy_button.dart';
+import '../../theme/app_style.dart';
 
 /// 超过该长度不做语法高亮（纯等宽渲染），避免大输出卡顿。
 const kHighlightMaxChars = 20000;
@@ -105,7 +106,7 @@ TextSpan? highlightCode(String code, String language) {
     final result = _highlight.highlight(code: code, language: language, ignoreIllegals: true);
     if (result.errorRaised != null) return null;
     final renderer = TextSpanRenderer(
-      const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.45),
+      AppMono.code,
       githubDarkTheme,
     );
     result.render(renderer);
@@ -142,17 +143,12 @@ class CodeBlockView extends StatelessWidget {
   Widget build(BuildContext context) {
     final lang = normalizeLanguage(language);
     final span = highlight && lang != null ? highlightCode(code, lang) : null;
-    final body = span == null
-        ? Text(
-            code,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 13, height: 1.45),
-          )
-        : Text.rich(span);
+    final body = span == null ? Text(code, style: AppMono.code) : Text.rich(span);
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
+        color: CodePalette.background,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -167,13 +163,13 @@ class CodeBlockView extends StatelessWidget {
                     lang ?? language,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Color(0xFF8B949E), fontSize: 11),
+                    style: const TextStyle(color: CodePalette.muted, fontSize: 11),
                   ),
                 ),
                 CopyIconButton(
                   text: code,
                   tooltip: '复制代码',
-                  color: const Color(0xFF8B949E),
+                  color: CodePalette.muted,
                 ),
               ],
             ),
@@ -182,7 +178,7 @@ class CodeBlockView extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             child: DefaultTextStyle.merge(
-              style: const TextStyle(color: Color(0xFFC9D1D9)),
+              style: const TextStyle(color: CodePalette.text),
               child: body,
             ),
           ),
