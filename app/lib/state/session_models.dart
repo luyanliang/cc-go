@@ -14,6 +14,7 @@ class SessionSummary {
     this.claudeSessionId,
     this.model,
     this.permissionMode = 'default',
+    this.origin = 'created',
   });
 
   factory SessionSummary.fromJson(Map<String, dynamic> json) {
@@ -31,6 +32,7 @@ class SessionSummary {
       claudeSessionId: json['claudeSessionId'] as String?,
       model: json['model'] as String?,
       permissionMode: json['permissionMode'] as String? ?? 'default',
+      origin: json['origin'] as String? ?? 'created',
     );
   }
 
@@ -43,6 +45,12 @@ class SessionSummary {
   final String? claudeSessionId;
   final String? model;
   final String permissionMode;
+
+  /// 会话来源（protocol.ts `origin`）：手机/daemon 创建，或从 Claude Code
+  /// 历史会话导入接管。
+  final String origin;
+
+  bool get imported => origin == 'imported';
 
   String get phaseLabel => switch (phase) {
         SessionPhase.idle => '空闲',

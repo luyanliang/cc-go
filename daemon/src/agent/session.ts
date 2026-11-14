@@ -15,6 +15,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { closeSync, fstatSync, openSync, readSync, statSync } from 'node:fs'
 import {
   query,
   type CanUseTool,
@@ -34,6 +35,13 @@ import type {
   ToolItem,
   UserItem,
 } from '../protocol.js'
+import {
+  TranscriptMapper,
+  newestTranscriptIn,
+  summarizeToolContent,
+  transcriptPath,
+  transcriptSharesLineage,
+} from '../history.js'
 
 // ---------------------------------------------------------------------------
 // Minimal pushable async iterable feeding the SDK prompt stream
@@ -105,6 +113,12 @@ interface PendingPermission {
 
 const ECHO_GUARD_MS = 90_000
 
+// History tail (multi-project-history D6): poll cadence and the windows used
+// to drop our own writes echoed back through the transcript file.
+const TAIL_POLL_MS = 3_000
+const TAIL_USER_ECHO_MS = 90_000
+const TAIL_ASSISTANT_DUP_MS = 10 * 60_000
+
 export class Session {
   readonly id: string
   title: string
@@ -112,6 +126,12 @@ export class Session {
   model: string | null
   permissionMode: PermissionMode
   claudeSessionId: string | null = null
+  /** How this session came to exist (list badge on the phone). */
+  origin: 'created' | 'imported' = 'created'
+  /** Stable "imported from" Claude session id — survives forks, so import
+   *  idempotency and discovery's managed flag stay correct after resume
+   *  rewrites claudeSessionId. */
+  originClaudeSessionId: string | null = null
   createdAt = Date.now()
   updatedAt = Date.now()
 
@@ -132,6 +152,15 @@ export class Session {
   private blockKinds = new Map<number, 'text' | 'thinking' | 'tool_use'>()
   private currentAssistant: AssistantItem | null = null
 
+  // ---- history tail state (D6) ----------------------------------------------
+  private tailTimer: NodeJS.Timeout | null = null
+  private tailMapper: TranscriptMapper | null = null
+  private tailSid: string | null = null
+  private tailOffset = 0
+  private tailLastSize = -1
+  /** uuid/callId tails of transcript items already shown (fork dedupe). */
+  private tailKnown = new Set<string>()
+
   constructor(
     callbacks: SessionCallbacks,
     opts: {
@@ -140,6 +169,7 @@ export class Session {
       title?: string
       model?: string
       permissionMode?: PermissionMode
+      origin?: 'created' | 'imported'
     },
   ) {
     this.callbacks = callbacks
@@ -148,6 +178,7 @@ export class Session {
     this.title = opts.title ?? 'New session'
     this.model = opts.model ?? null
     this.permissionMode = opts.permissionMode ?? 'default'
+    this.origin = opts.origin ?? 'created'
   }
 
   /**
@@ -156,6 +187,172 @@ export class Session {
    */
   adoptColdStart(notice: string): void {
     this.addNotice('info', notice)
+  }
+
+  /**
+   * Prefill the transcript with replayed history items (session.import, and
+   * rehydrating an imported session after a daemon restart). Item ids keep
+   * the mapper's `hist-<claudeSessionId>-*` form so they cannot collide with
+   * live item ids; item.added events fire so a connection that already
+   * watched (rehydrate case) receives them — snapshot merges stay idempotent.
+   */
+  seedHistoryItems(items: Item[]): void {
+    for (const item of items) {
+      this.items.push(item)
+      this.emitSessionEvent({ ev: 'item.added', item })
+    }
+    if (items.length > 0) {
+      this.updatedAt = Date.now()
+      this.emitSessionEvent({ ev: 'summary', summary: this.summary() })
+    }
+  }
+
+  // ---- history tail: external writes to this session's transcript --------
+
+  /**
+   * Watch Claude's transcript file for writes this session did not make —
+   * e.g. the user resuming the same conversation in a terminal — and merge
+   * the new items into the phone's transcript (multi-project-history D6).
+   * Enabled only for imported sessions. Starts from offset 0 and relies on
+   * uuid/callId dedupe, so it is safe against replays and forked copies.
+   */
+  startHistoryTail(): void {
+    if (this.tailTimer || this.disposed || !this.claudeSessionId) return
+    for (const item of this.items) {
+      const key = tailKeyOf(item)
+      if (key !== null) this.tailKnown.add(key)
+    }
+    this.tailSid = this.claudeSessionId
+    this.tailMapper = new TranscriptMapper(this.claudeSessionId)
+    void this.tailPoll()
+    this.tailTimer = setInterval(() => void this.tailPoll(), TAIL_POLL_MS)
+    this.tailTimer.unref()
+  }
+
+  private stopHistoryTail(): void {
+    if (this.tailTimer) {
+      clearInterval(this.tailTimer)
+      this.tailTimer = null
+    }
+  }
+
+  private tailPoll(): void {
+    if (this.disposed) return
+    try {
+      const sid = this.claudeSessionId
+      if (!sid || !this.tailMapper) return
+
+      // The conversation moved to a different session id — either our own
+      // SDK resume forking, or a lineage-confirmed terminal fork adopted
+      // below. Re-sync from the new file's start; uuid dedupe absorbs the
+      // copied history, and only genuinely new lines surface.
+      if (sid !== this.tailSid) {
+        this.tailSid = sid
+        this.tailOffset = 0
+        this.tailLastSize = -1
+        this.tailMapper = new TranscriptMapper(sid)
+      }
+
+      const file = transcriptPath(sid, this.cwd)
+
+      // A terminal `--resume` forks under a NEW id while our file goes
+      // quiet. Follow the newest transcript ONLY if it shares lineage with
+      // what we already show — an unrelated conversation in the same project
+      // must never hijack this session's identity.
+      if (this.tailLastSize >= 0) {
+        const current = statOrNull(file)
+        if (current && current.size === this.tailLastSize) {
+          const newest = newestTranscriptIn(this.cwd)
+          if (
+            newest &&
+            newest.claudeSessionId !== sid &&
+            newest.mtimeMs > current.mtimeMs &&
+            transcriptSharesLineage(newest.file, this.tailKnown)
+          ) {
+            this.trackClaudeSession(newest.claudeSessionId) // next poll re-syncs
+          }
+        }
+      }
+
+      // Incremental read from tailOffset — never the whole file per poll.
+      const fd = openSync(file, 'r')
+      let size = 0
+      let chunk = ''
+      try {
+        size = fstatSync(fd).size
+        if (size < this.tailOffset) {
+          // truncated/rewritten: re-sync from the start
+          this.tailOffset = 0
+          this.tailMapper = new TranscriptMapper(sid)
+        }
+        if (size > this.tailOffset) {
+          const buf = Buffer.alloc(size - this.tailOffset)
+          readSync(fd, buf, 0, buf.length, this.tailOffset)
+          chunk = buf.toString('utf8')
+        }
+      } finally {
+        closeSync(fd)
+      }
+      this.tailLastSize = size
+      if (chunk === '') return
+
+      const lastNewline = chunk.lastIndexOf('\n')
+      if (lastNewline === -1) return // no complete line yet — wait for more
+      const complete = chunk.slice(0, lastNewline + 1)
+      this.tailOffset += Buffer.byteLength(complete, 'utf8')
+
+      let merged = 0
+      for (const line of complete.split('\n')) {
+        for (const item of this.tailMapper.processLine(line)) {
+          if (this.mergeTailedItem(item)) merged++
+        }
+      }
+      // Persist the refreshed summary + notify list watchers once per batch
+      // (per-item onSummary would spam the store and sessions.changed).
+      if (merged > 0) this.callbacks.onSummary()
+    } catch {
+      // file gone or unreadable — the next poll retries
+    }
+  }
+
+  /** @returns true when the item was shown to watchers. */
+  private mergeTailedItem(item: Item): boolean {
+    const key = tailKeyOf(item)
+    if (key === null) return false
+    if (this.tailKnown.has(key)) return false
+    this.tailKnown.add(key)
+    if (this.isTailEcho(item)) return false
+    this.items.push(item)
+    this.emitSessionEvent({ ev: 'item.added', item })
+    this.touch()
+    return true
+  }
+
+  /** Drop items that merely echo what already happened through this daemon
+   *  (phone prompts echoed into the file; SDK-streamed assistant replies). */
+  private isTailEcho(item: Item): boolean {
+    if (item.kind === 'user') {
+      return this.items.some(
+        (i) =>
+          i.kind === 'user' &&
+          i.text === item.text &&
+          item.createdAt - i.createdAt >= -5_000 &&
+          item.createdAt - i.createdAt < TAIL_USER_ECHO_MS,
+      )
+    }
+    if (item.kind === 'assistant') {
+      return this.items.some(
+        (i) =>
+          i.kind === 'assistant' &&
+          i.text === item.text &&
+          Math.abs(item.createdAt - i.createdAt) < TAIL_ASSISTANT_DUP_MS,
+      )
+    }
+    if (item.kind === 'tool') {
+      return item.claudeCallId !== undefined &&
+        this.items.some((i) => i.kind === 'tool' && i.claudeCallId === item.claudeCallId)
+    }
+    return false
   }
 
   // ---- public API ----------------------------------------------------------
@@ -175,6 +372,8 @@ export class Session {
       claudeSessionId: this.claudeSessionId,
       model: this.model,
       permissionMode: this.permissionMode,
+      origin: this.origin,
+      originClaudeSessionId: this.originClaudeSessionId,
     }
   }
 
@@ -259,6 +458,7 @@ export class Session {
 
   dispose(): void {
     this.disposed = true
+    this.stopHistoryTail()
     this.denyAllPermissions('Session closed')
     this.currentAbort?.abort()
     this.currentPushable?.close()
@@ -471,7 +671,7 @@ export class Session {
         if (!item) continue
         if (item.status === 'denied') continue // phone's denial is the final word
         item.status = block.is_error ? 'error' : 'done'
-        item.summary = summarizeToolResult(block.content)
+        item.summary = summarizeToolContent(block.content, 400)
         this.updateItem(item)
       }
       if (sawToolResult) return
@@ -631,25 +831,30 @@ function userMessageText(message: Extract<SDKMessage, { type: 'user' }>): string
   return null
 }
 
-function summarizeToolResult(content: unknown): string | undefined {
-  if (typeof content === 'string') return clip(content)
-  if (Array.isArray(content)) {
-    const text = content
-      .map((b) => (typeof b === 'object' && b !== null && 'text' in b ? String((b as { text: unknown }).text) : ''))
-      .join('')
-    if (text) return clip(text)
-  }
-  return undefined
-}
+// Tool-result summaries come from the shared summarizeToolContent in
+// history.ts so live rows and replayed rows clip identically.
 
-function clip(text: string, max = 400): string {
-  const clean = text.replace(/\s+/g, ' ').trim()
-  return clean.length > max ? `${clean.slice(0, max)}…` : clean
-}
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
+}
+
+function statOrNull(file: string): { size: number; mtimeMs: number } | null {
+  try {
+    return statSync(file)
+  } catch {
+    return null
+  }
+}
+/** Dedupe key for transcript-derived items: the uuid (user/assistant) or
+ *  tool-call id after the `hist-<sessionId>-` prefix. Stable across forks —
+ *  a forked copy of the transcript keeps the same line uuids, so replayed
+ *  history collapses onto what the phone already has. */
+function tailKeyOf(item: Item): string | null {
+  const m = /^hist-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-(.+)$/i.exec(item.id)
+  if (m === null) return null
+  return item.kind === 'tool' && item.claudeCallId ? `tool:${item.claudeCallId}` : `${item.kind}:${m[1]}`
 }
 
 /** Tag the spawned Claude so its sessions stay visible in `claude --resume`. */

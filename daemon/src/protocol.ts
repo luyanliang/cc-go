@@ -104,6 +104,14 @@ export const SessionSummary = z.object({
   claudeSessionId: z.string().nullable(),
   model: z.string().nullable(),
   permissionMode: PermissionMode,
+  /** How this session came to exist: created by the phone/daemon or
+   *  imported from an existing Claude Code session (history takeover). */
+  origin: z.enum(['created', 'imported']).default('created'),
+  /** The Claude session id this session was imported from, when imported.
+   *  Claude's resume forks under ever-new ids, so this stays stable and
+   *  keeps import idempotency and discovery's managed flag correct across
+   *  forks. Null for created sessions. */
+  originClaudeSessionId: z.string().nullable().default(null),
 })
 export type SessionSummary = z.infer<typeof SessionSummary>
 
@@ -205,6 +213,68 @@ export const PermissionRespondParams = z.object({
   /** Remember this tool name for the rest of the session. */
   allowToolForSession: z.boolean().default(false),
 })
+
+// ---- Projects & session history (multi-project-history) --------------------
+
+export const ProjectInfo = z.object({
+  /** Canonical absolute path (realpath-resolved when it exists). */
+  path: z.string(),
+  /** Display name — directory basename. */
+  name: z.string(),
+  /** False when the directory no longer exists on disk. */
+  available: z.boolean(),
+  /** Number of cc-go sessions whose cwd is this project. */
+  sessionCount: z.number().int().nonnegative(),
+})
+export type ProjectInfo = z.infer<typeof ProjectInfo>
+
+export const ProjectsListResult = z.object({ projects: z.array(ProjectInfo) })
+export type ProjectsListResult = z.infer<typeof ProjectsListResult>
+
+export const ProjectsRegisterParams = z.object({ path: z.string().min(1) })
+export const ProjectsRegisterResult = z.object({ project: ProjectInfo })
+
+export const DiscoveredSession = z.object({
+  /** Claude Code's own session id (the .jsonl filename stem). */
+  claudeSessionId: z.string(),
+  /** First user message (truncated), falling back to a time-based title. */
+  title: z.string(),
+  lastActiveAt: z.number(),
+  messageCount: z.number().int().nonnegative(),
+  /** True when a cc-go session already tracks this Claude session. */
+  managed: z.boolean(),
+  /** cc-go session id when managed, else null. */
+  ccGoSessionId: z.string().nullable().default(null),
+})
+export type DiscoveredSession = z.infer<typeof DiscoveredSession>
+
+export const SessionsDiscoverParams = z.object({ cwd: z.string().min(1) })
+export const SessionsDiscoverResult = z.object({ sessions: z.array(DiscoveredSession) })
+export type SessionsDiscoverResult = z.infer<typeof SessionsDiscoverResult>
+
+export const SessionHistoryParams = z.object({
+  claudeSessionId: z.string().min(1),
+  cwd: z.string().min(1),
+  /** 1-based source line number; the page returns items from lines before it. */
+  beforeLine: z.number().int().positive().optional(),
+  limit: z.number().int().positive().max(500).default(100),
+})
+export type SessionHistoryParams = z.infer<typeof SessionHistoryParams>
+
+export const SessionHistoryResult = z.object({
+  /** Chronological order within the page. */
+  items: z.array(Item),
+  /** Cursor for the next (older) page; null when history is exhausted. */
+  nextBeforeLine: z.number().int().nullable(),
+})
+export type SessionHistoryResult = z.infer<typeof SessionHistoryResult>
+
+export const SessionImportParams = z.object({
+  claudeSessionId: z.string().min(1),
+  cwd: z.string().min(1),
+  title: z.string().optional(),
+})
+export const SessionImportResult = z.object({ summary: SessionSummary })
 
 /** Error codes used across the wire. */
 export const ErrorCodes = {

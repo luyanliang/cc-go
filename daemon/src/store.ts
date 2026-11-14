@@ -8,9 +8,9 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { SessionSummary } from './protocol.js'
 
 export interface PairedDevice {
@@ -25,6 +25,9 @@ interface StoreData {
   daemonName: string
   devices: PairedDevice[]
   sessions: SessionSummary[]
+  /** Registered project directories (canonical paths). Whitelist for
+   *  session creation / discovery / import (multi-project-history D2). */
+  projects: string[]
 }
 
 export class Store {
@@ -47,6 +50,7 @@ export class Store {
       daemonName: defaultHostName(),
       devices: [],
       sessions: [],
+      projects: [],
     }
     try {
       const raw = readFileSync(this.fileFor('store.json'), 'utf8')
@@ -119,6 +123,46 @@ export class Store {
   deleteSession(id: string): void {
     this.data.sessions = this.data.sessions.filter((s) => s.id !== id)
     this.save()
+  }
+
+  // ---- projects -----------------------------------------------------------
+
+  /**
+   * Canonical form for project directories: realpath when the path exists
+   * (collapses symlinks and `..` segments alike), plain resolution otherwise.
+   * Registration and every whitelist check MUST go through this so `..`
+   * traversal or a symlinked alias cannot slip past an exact-match compare.
+   */
+  canonicalProjectPath(dir: string): string {
+    const resolved = resolve(dir)
+    try {
+      return realpathSync(resolved)
+    } catch {
+      return resolved
+    }
+  }
+
+  listProjects(): readonly string[] {
+    return this.data.projects
+  }
+
+  addProject(dir: string): string {
+    const canonical = this.canonicalProjectPath(dir)
+    if (!this.data.projects.includes(canonical)) {
+      this.data.projects.push(canonical)
+      this.save()
+    }
+    return canonical
+  }
+
+  removeProject(dir: string): void {
+    const canonical = this.canonicalProjectPath(dir)
+    this.data.projects = this.data.projects.filter((p) => p !== canonical)
+    this.save()
+  }
+
+  hasProject(dir: string): boolean {
+    return this.data.projects.includes(this.canonicalProjectPath(dir))
   }
 }
 

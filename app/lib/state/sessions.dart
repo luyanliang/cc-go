@@ -93,14 +93,16 @@ class SessionsNotifier extends Notifier<AsyncValue<List<SessionSummary>>> {
     });
   }
 
-  /// 新建会话（daemon defaultCwd），返回新会话供导航（task 5.2）。
-  Future<SessionSummary> create() async {
+  /// 新建会话，返回新会话供导航（task 5.2）。`cwd` 缺省时 daemon 用
+  /// defaultCwd；多项目下由 UI 选定后传入（multi-project-history 4.3）。
+  Future<SessionSummary> create({String? cwd}) async {
     final appLink = ref.read(appLinkProvider).value;
     if (appLink == null) {
       throw StateError('连接未就绪，无法新建会话');
     }
-    final result =
-        await appLink.link.call('session.create', {}) as Map<String, dynamic>;
+    final result = await appLink.link.call('session.create', {
+      'cwd': ?cwd,
+    }) as Map<String, dynamic>;
     final summary = SessionSummary.fromJson(result['summary'] as Map<String, dynamic>);
     // sessions.changed 会到，但为导航即时性先行合入本地列表。
     final current = state.value ?? const <SessionSummary>[];
