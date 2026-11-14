@@ -40,6 +40,9 @@ function client(url: string) {
 describe('daemon HTTP/WebSocket boundary', () => {
   const dir = mkdtempSync(join(tmpdir(), 'ccgo-server-test-'))
   const store = new Store(dir)
+  // multi-project-history whitelist: a cwd-less session.create falls back to
+  // the first registered project, so the fixture registers its own dir
+  store.addProject(dir)
   const manager = new SessionManager(store)
   let server: Server
   let base: string

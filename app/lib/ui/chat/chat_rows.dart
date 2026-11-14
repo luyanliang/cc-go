@@ -1,10 +1,18 @@
-/// 转录条目渲染（task 6.2）：用户气泡 / 助手流式文本 / 工具折叠行 /
-/// notice 提示条；外加本地排队气泡（task 6.3）。
+/// 转录行渲染：derive（chat_row_model.dart）出行列表后逐行装配 ——
+/// 用户气泡 / 助手 Markdown / 工具折叠行 / 工具分组行 / notice 提示条 /
+/// 权限卡 / 排队气泡。结构与分组决策都在 derive 层，这里只认行。
 library;
 
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/transcript.dart';
+import 'chat_row_model.dart';
+import 'render/assistant_markdown.dart';
+import 'render/copy_button.dart';
+import 'tool_views.dart';
 
 class TranscriptListView extends StatelessWidget {
   const TranscriptListView({
@@ -33,26 +41,43 @@ class TranscriptListView extends StatelessWidget {
         child: Text('发送第一条消息开始', style: TextStyle(color: Colors.grey)),
       );
     }
+    final rows = deriveChatRows(items: items, queuedTexts: queuedTexts);
     return ListView.builder(
       controller: scrollController,
       padding: const EdgeInsets.symmetric(vertical: 8),
-      itemCount: items.length + queuedTexts.length,
-      itemBuilder: (context, index) {
-        if (index < items.length) {
-          final item = items[index];
-          // 权限卡片内联在对话流中（task 7.1）：应答后该条目状态翻转，
-          // 自动回到普通工具行（task 7.2）。
-          if (item.kind == ItemKind.tool && item.status == 'awaiting-permission') {
-            return PermissionCard(
-              item: item,
-              onRespond: onRespondPermission,
-            );
-          }
-          return TranscriptRow(item: item);
-        }
-        return _QueuedBubble(text: queuedTexts[index - items.length]);
-      },
+      itemCount: rows.length,
+      // 行主键必须挂给 framework：历史分页向前插页、回合折叠把 N 行收成
+      // 2 行时槽位会平移，无 key 的展开/复制状态会跳到别的条目上。
+      itemBuilder: (context, index) => KeyedSubtree(
+        key: ValueKey<String>(rows[index].key),
+        child: _rowWidget(rows[index]),
+      ),
     );
+  }
+
+  /// 行装配的唯一入口（折叠区内部也走这里，见 [insideFold]）。
+  Widget _rowWidget(ChatRow row, {bool insideFold = false}) {
+    return switch (row) {
+      UserRow(:final item) => _UserBubble(item: item),
+      AssistantRow(:final item) => _AssistantText(item: item),
+      ToolRow(:final item) => _ToolRow(item: item),
+      ToolGroupRow(:final tools) => _ToolGroupTile(tools: tools),
+      // 回合折叠行（task 6.2）：展开后过程条目复用同一套行装配。
+      TurnFoldRow() => insideFold
+          ? const SizedBox.shrink()
+          : _TurnFoldTile(
+              row: row,
+              rowBuilder: (inner) => _rowWidget(inner, insideFold: true),
+            ),
+      NoticeRow(:final item) => _NoticeBand(item: item),
+      // 权限卡片内联在对话流中：应答后该条目状态翻转，derive 下一帧
+      // 自动回到普通工具行。折叠资格判定排除了待授权工具，折叠区内
+      // 按构造不可能出现。
+      PermissionRow(:final item) => insideFold
+          ? const SizedBox.shrink()
+          : PermissionCard(item: item, onRespond: onRespondPermission),
+      QueuedRow(:final text) => _QueuedBubble(text: text),
+    };
   }
 }
 
@@ -120,7 +145,7 @@ class _PermissionCardState extends State<PermissionCard> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                const JsonEncoderLite().convert(widget.item.toolInput!),
+                const JsonEncoder.withIndent('  ').convert(widget.item.toolInput!),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
               ),
             ),
@@ -156,19 +181,64 @@ class _PermissionCardState extends State<PermissionCard> {
   }
 }
 
-class TranscriptRow extends StatelessWidget {
-  const TranscriptRow({super.key, required this.item});
+/// 回合折叠摘要行（task 6.2）：已收起的过程条目一行概览，默认收起；
+/// 展开后过程条目经 [rowBuilder] 走同一套行装配还原，最终回答始终在
+/// 折叠行之外。
+class _TurnFoldTile extends StatelessWidget {
+  const _TurnFoldTile({required this.row, required this.rowBuilder});
 
-  final TranscriptItem item;
+  final TurnFoldRow row;
+  final Widget Function(ChatRow row) rowBuilder;
 
   @override
   Widget build(BuildContext context) {
-    return switch (item.kind) {
-      ItemKind.user => _UserBubble(item: item),
-      ItemKind.assistant => _AssistantText(item: item),
-      ItemKind.tool => _ToolRow(item: item),
-      ItemKind.notice => _NoticeBand(item: item),
-    };
+    final theme = Theme.of(context);
+    final parts = [
+      if (row.toolCount > 0) '${row.toolCount} 次工具调用',
+      if (row.messageCount > 0) '${row.messageCount} 条消息',
+    ];
+    return ExpansionTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      leading: Icon(Icons.unfold_more, size: 18, color: theme.colorScheme.outline),
+      title: Text('已收起 · ${parts.join(' · ')}', style: theme.textTheme.labelMedium),
+      childrenPadding: const EdgeInsets.only(left: 8),
+      children: [
+        for (final inner in deriveChatRows(items: row.process, foldTurns: false))
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: rowBuilder(inner),
+          ),
+      ],
+    );
+  }
+}
+
+/// 连续工具调用分组行（task 3.2）：折叠单行显示次数与工具名概览，
+/// 展开列出组内每次调用（复用 _ToolRow）。
+class _ToolGroupTile extends StatelessWidget {
+  const _ToolGroupTile({required this.tools});
+
+  final List<TranscriptItem> tools;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final names = tools.map((t) => t.toolName ?? '工具').toSet().join(' · ');
+    return ExpansionTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      leading: const Icon(Icons.build_circle_outlined, size: 20),
+      title: Text(
+        '工具调用 × ${tools.length}',
+        style: theme.textTheme.bodyMedium,
+      ),
+      subtitle: names.isEmpty
+          ? null
+          : Text(names, maxLines: 1, overflow: TextOverflow.ellipsis),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      children: [for (final tool in tools) _ToolRow(item: tool)],
+    );
   }
 }
 
@@ -189,7 +259,8 @@ class _UserBubble extends StatelessWidget {
           color: scheme.primaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Text(item.text),
+        // 可选中文本：长按拖选后经系统选择菜单复制（task 1.3）。
+        child: SelectableText(item.text),
       ),
     );
   }
@@ -203,20 +274,64 @@ class _AssistantText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final streaming = item.isStreamingAssistant;
-    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 4, 48, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SelectableText(
-            item.text.isEmpty && streaming ? '…' : item.text,
-            style: streaming
-                ? TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.7))
-                : null,
-          ),
-        ],
+      child: Opacity(
+        // 流式期间整体降不透明度示意"未完成"；完成后恢复。
+        opacity: streaming ? 0.85 : 1.0,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // thinking 数据一直在协议里流动（task 5.1 补展示）：
+            // 默认收起，点开可读全文。
+            if (item.thinking.isNotEmpty) _ThinkingSection(thinking: item.thinking),
+            // 链接点击用系统浏览器打开（gpt_markdown 只在回调非空时
+            // 才挂点击处理器，不传就是死链）。
+            AssistantMarkdown(
+              text: item.text,
+              streaming: streaming,
+              onLinkTap: (url) => launchUrl(Uri.parse(url)),
+            ),
+            // 完成且非空才提供整条复制（复制的是 Markdown 原文）。
+            if (!streaming && item.text.isNotEmpty)
+              CopyIconButton(text: item.text, tooltip: '复制消息'),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+/// 助手思考段：折叠单行（默认收起），展开显示全文。
+class _ThinkingSection extends StatelessWidget {
+  const _ThinkingSection({required this.thinking});
+
+  final String thinking;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ExpansionTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      tilePadding: EdgeInsets.zero,
+      leading: Icon(Icons.psychology_outlined, size: 18, color: theme.colorScheme.outline),
+      title: Text('思考过程', style: theme.textTheme.labelMedium),
+      childrenPadding: const EdgeInsets.only(bottom: 8),
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SelectableText(
+            thinking,
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -225,6 +340,13 @@ class _ToolRow extends StatelessWidget {
   const _ToolRow({required this.item});
 
   final TranscriptItem item;
+
+  /// 副标题：定制一行概览（命令/路径/模式）优先，否则结果摘要。
+  Text? _subtitle() {
+    final text = toolSubtitleFor(item) ?? item.summary;
+    if (text == null || text.isEmpty) return null;
+    return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
+  }
 
   static const _statusLabel = {
     'running': '运行中',
@@ -253,36 +375,39 @@ class _ToolRow extends StatelessWidget {
         '${item.toolName ?? "工具"} · ${_statusLabel[item.status] ?? item.status}',
         style: theme.textTheme.bodyMedium,
       ),
-      subtitle: item.summary != null && item.summary!.isNotEmpty
-          ? Text(item.summary!, maxLines: 1, overflow: TextOverflow.ellipsis)
-          : null,
+      subtitle: _subtitle(),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
-        if (item.toolInput != null && item.toolInput!.isNotEmpty) ...[
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('输入', style: theme.textTheme.labelSmall),
-          ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-              borderRadius: BorderRadius.circular(8),
+        // 定制视图优先（task 4.2/4.3）；未知工具回退通用 JSON 输入 + 摘要。
+        if (toolDetailFor(item) case final detail?)
+          detail
+        else ...[
+          if (item.toolInput != null && item.toolInput!.isNotEmpty) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('输入', style: theme.textTheme.labelSmall),
             ),
-            child: Text(
-              const JsonEncoderLite().convert(item.toolInput!),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                const JsonEncoder.withIndent('  ').convert(item.toolInput!),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
             ),
-          ),
-        ],
-        if (item.summary != null && item.summary!.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('结果', style: theme.textTheme.labelSmall),
-          ),
-          Text(item.summary!, style: theme.textTheme.bodySmall),
+          ],
+          if (item.summary != null && item.summary!.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('结果', style: theme.textTheme.labelSmall),
+            ),
+            Text(item.summary!, style: theme.textTheme.bodySmall),
+          ],
         ],
       ],
     );
@@ -337,53 +462,5 @@ class _QueuedBubble extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-/// 轻量 JSON 缩进（避免仅为格式化引依赖）。
-class JsonEncoderLite {
-  const JsonEncoderLite();
-
-  String convert(Map<String, dynamic> map) {
-    final buf = StringBuffer();
-    _write(map, buf, 0);
-    return buf.toString();
-  }
-
-  void _write(Object? value, StringBuffer out, int indent) {
-    const pad = '  ';
-    switch (value) {
-      case Map():
-        if (value.isEmpty) {
-          out.write('{}');
-          return;
-        }
-        out.write('{\n');
-        value.forEach((k, v) {
-          out.write(pad * (indent + 1));
-          out.write('"$k": ');
-          _write(v, out, indent + 1);
-          out.write(',\n');
-        });
-        // 去掉最后的 ",\n" 换成 "\n"
-        final s = out.toString();
-        out
-          ..clear()
-          ..write(s.substring(0, s.length - 2))
-          ..write('\n')
-          ..write(pad * indent)
-          ..write('}');
-      case List():
-        out.write('[${value.join(", ")}]');
-      case String():
-        out.write('"$value"');
-      case num():
-      case bool():
-        out.write('$value');
-      case null:
-        out.write('null');
-      default:
-        out.write('"$value"');
-    }
   }
 }

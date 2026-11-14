@@ -16,13 +16,18 @@ import 'package:cc_go/transport/ssh/ssh_host_key.dart';
 import 'package:cc_go/transport/ssh/ssh_secrets.dart';
 import 'package:cc_go/transport/host_link.dart';
 
-/// 可编程假 daemon：host.info/session.create 可预设，事件可注入。
+/// 可编程假 daemon：host.info/session.create/projects.list 可预设，事件可注入。
 class FakeDaemonLink implements HostLinkBase {
   FakeDaemonLink();
 
   final eventsController = StreamController<DaemonEvent>.broadcast();
   final calls = <(String, Map<String, dynamic>?)>[];
   List<Map<String, dynamic>> sessions = [];
+
+  /// projects.list 结果；默认单项目（daemon 注册表为空时的默认目录语义）。
+  List<Map<String, dynamic>> projects = [
+    {'path': '/tmp/ccgo-test', 'name': 'ccgo-test', 'available': true, 'sessionCount': 0},
+  ];
   int sessionSeq = 0;
 
   @override
@@ -49,6 +54,9 @@ class FakeDaemonLink implements HostLinkBase {
     calls.add((method, params));
     if (method == 'host.info') {
       return {'host': {'name': 'desk'}, 'sessions': sessions};
+    }
+    if (method == 'projects.list') {
+      return {'projects': projects};
     }
     if (method == 'session.create') {
       final summary = _newSession();
@@ -105,19 +113,22 @@ Map<String, dynamic> sessionJson(
   String id,
   String title,
   String phase,
-  int updatedMinutesAgo,
-) {
+  int updatedMinutesAgo, {
+  String cwd = '/home/luke/work',
+  String origin = 'created',
+}) {
   final now = DateTime.now();
   return {
     'id': id,
     'title': title,
-    'cwd': '/home/luke/work',
+    'cwd': cwd,
     'phase': phase,
     'createdAt': now.subtract(const Duration(hours: 1)).millisecondsSinceEpoch,
     'updatedAt': now.subtract(Duration(minutes: updatedMinutesAgo)).millisecondsSinceEpoch,
     'claudeSessionId': null,
     'model': null,
     'permissionMode': 'default',
+    'origin': origin,
   };
 }
 
@@ -184,14 +195,26 @@ void main() {
     expect(find.text('刚刚'), findsNothing); // 1 分钟前的不是"刚刚"
     expect(find.text('1 分钟前'), findsOneWidget);
 
-    // 待权限排在最前
-    final firstTitle = tester.widgetList<ListTile>(find.byType(ListTile)).first;
-    expect(find.descendant(of: find.byWidget(firstTitle), matching: find.text('要写文件')),
-        findsOneWidget);
+    // 待权限排在最前（multi-project-history 后首个 ListTile 是分组头，
+    // 会话 tile 从含会话标题的 ListTile 里找）
+    final sessionTiles = tester
+        .widgetList<ListTile>(find.byType(ListTile))
+        .where((tile) => find
+            .descendant(of: find.byWidget(tile), matching: find.text('要写文件'))
+            .evaluate()
+            .isNotEmpty ||
+            find.descendant(of: find.byWidget(tile), matching: find.text('改 bug')).evaluate().isNotEmpty ||
+            find.descendant(of: find.byWidget(tile), matching: find.text('跑测试')).evaluate().isNotEmpty)
+        .toList();
+    expect(sessionTiles, isNotEmpty);
+    expect(
+      find.descendant(of: find.byWidget(sessionTiles.first), matching: find.text('要写文件')),
+      findsOneWidget,
+    );
     // 金色徽标存在
     expect(
       tester.widget<Icon>(find.descendant(
-        of: find.byType(ListTile).first,
+        of: find.byWidget(sessionTiles.first),
         matching: find.byIcon(Icons.lock_clock),
       )).color,
       Colors.amber,
@@ -233,11 +256,11 @@ void main() {
     await tester.tap(find.text('新建会话'));
     await tester.pumpAndSettle();
 
-    expect(
-      h.fake.calls.map((c) => c.$1),
-      contains('session.create'),
-      reason: '不带 cwd，daemon 用 defaultCwd',
-    );
+    final createCall = h.fake.calls
+        .where((c) => c.$1 == 'session.create')
+        .reduce((a, b) => b); // 取最后一次
+    expect(createCall.$2?['cwd'], '/tmp/ccgo-test',
+        reason: '仅一个可用项目：直接在该目录创建（multi-project-history 4.3）');
     expect(find.text('新会话 1'), findsOneWidget, reason: '列表即时合入');
     expect(find.text('发送第一条消息开始'), findsOneWidget, reason: '导航到空转录聊天页');
   });

@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import type { DaemonEvent, PermissionMode, SessionSummary } from '../protocol.js'
 import type { Store } from '../store.js'
+import { collectHistory, titleFromHistory } from '../history.js'
 import { Session } from './session.js'
 
 export class SessionManager {
@@ -43,7 +44,13 @@ export class SessionManager {
     return this.sessions.get(id)
   }
 
-  create(opts: { cwd: string; title?: string; model?: string; permissionMode?: PermissionMode }): Session {
+  create(opts: {
+    cwd: string
+    title?: string
+    model?: string
+    permissionMode?: PermissionMode
+    origin?: 'created' | 'imported'
+  }): Session {
     const session = new Session(
       {
         onEvent: (event) => this.emit(event),
@@ -57,6 +64,45 @@ export class SessionManager {
     this.sessions.set(session.id, session)
     this.store.upsertSession(session.summary())
     this.emit({ type: 'sessions.changed' })
+    return session
+  }
+
+  /**
+   * Take over an external Claude Code session as a regular cc-go session
+   * (multi-project-history D5): the first prompt resumes the Claude session
+   * (`resume: claudeSessionId`) and the phone's transcript comes pre-filled
+   * with the replayed history. Idempotent per claudeSessionId — importing
+   * twice returns the same cc-go session. The transcript file on disk is
+   * never modified. Throws HistoryError (mapped by server.ts) when the
+   * session does not exist or is unparseable, before anything is created.
+   */
+  async importSession(claudeSessionId: string, cwd: string, title?: string): Promise<Session> {
+    // Idempotency must match BOTH ids: Claude's resume forks under new
+    // session ids, so after the first prompt claudeSessionId has moved on —
+    // the stable originClaudeSessionId keeps re-imports from forking a
+    // second cc-go session for the same conversation.
+    const isSameConversation = (s: { claudeSessionId: string | null; originClaudeSessionId: string | null }): boolean =>
+      s.claudeSessionId === claudeSessionId || s.originClaudeSessionId === claudeSessionId
+    for (const session of this.sessions.values()) {
+      if (isSameConversation(session)) return session
+    }
+    const persisted = this.store.listSessions().find((s) => isSameConversation(s))
+    if (persisted) {
+      const live = this.ensureLive(persisted.id)
+      if (live) return live
+    }
+
+    const history = await collectHistory(claudeSessionId, cwd)
+    const session = this.create({
+      cwd,
+      title: title ?? titleFromHistory(history) ?? 'Imported session',
+      origin: 'imported',
+    })
+    session.claudeSessionId = claudeSessionId
+    session.originClaudeSessionId = claudeSessionId
+    session.seedHistoryItems(history)
+    session.configure({}) // persist claudeSessionId + origin link in the summary
+    session.startHistoryTail() // external writes (terminal --resume) sync in
     return session
   }
 
@@ -83,11 +129,37 @@ export class SessionManager {
       },
     )
     session.claudeSessionId = summary.claudeSessionId
+    session.origin = summary.origin
+    session.originClaudeSessionId = summary.originClaudeSessionId ?? null
     session.createdAt = summary.createdAt
     session.updatedAt = summary.updatedAt
-    session.adoptColdStart('Reconnected after daemon restart — earlier items are in Claude\'s transcript, not shown here.')
+    if (summary.origin === 'imported' && summary.claudeSessionId) {
+      // Imported sessions re-derive their history from Claude's transcript on
+      // disk, so a daemon restart does not lose the phone's item list.
+      void this.reseedImportedHistory(session, summary.claudeSessionId, summary.cwd)
+    } else {
+      session.adoptColdStart(
+        'Reconnected after daemon restart — earlier items are in Claude\'s transcript, not shown here.',
+      )
+    }
     this.sessions.set(session.id, session)
     return session
+  }
+
+  private async reseedImportedHistory(
+    session: Session,
+    claudeSessionId: string,
+    cwd: string,
+  ): Promise<void> {
+    try {
+      session.seedHistoryItems(await collectHistory(claudeSessionId, cwd))
+    } catch {
+      session.adoptColdStart(
+        'Reconnected after daemon restart — history replay failed; earlier items are in Claude\'s transcript.',
+      )
+    } finally {
+      session.startHistoryTail()
+    }
   }
 
   /** Get a live session, rehydrating a cold one on demand. */

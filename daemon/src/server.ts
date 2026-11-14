@@ -25,6 +25,7 @@ import { createServer as createHttpsServer } from 'node:https'
 import type { Server as NetServer } from 'node:net'
 import { timingSafeEqual } from 'node:crypto'
 import { networkInterfaces } from 'node:os'
+import { basename } from 'node:path'
 import { existsSync, statSync } from 'node:fs'
 import { WebSocket, WebSocketServer } from 'ws'
 import qrcode from 'qrcode-terminal'
@@ -34,12 +35,18 @@ import {
   HelloParams,
   PairRequest,
   PermissionRespondParams,
+  ProjectsRegisterParams,
   SessionConfigureParams,
   SessionCreateParams,
+  SessionHistoryParams,
+  SessionImportParams,
   SessionPromptParams,
+  SessionsDiscoverParams,
   type DaemonEvent,
   type HostInfo,
+  type ProjectInfo,
 } from './protocol.js'
+import { HistoryError, discoverSessions, replayHistory } from './history.js'
 import type { Store } from './store.js'
 import type { SessionManager } from './agent/manager.js'
 import { startDiscovery, type DiscoveryHandle } from './discovery.js'
@@ -197,6 +204,41 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
     return session
   }
 
+  /** Whitelist gate (multi-project-history D2): canonicalize and require the
+   *  directory to be registered. Returns the canonical path so downstream
+   *  cwd→transcript-dir encoding always matches Claude Code's own. */
+  function requireProjectDir(raw: string): string {
+    const canonical = store.canonicalProjectPath(raw)
+    if (!store.hasProject(raw)) {
+      throw new RpcError(ErrorCodes.BAD_REQUEST, `directory not registered: ${canonical}`)
+    }
+    return canonical
+  }
+
+  function projectInfo(path: string): ProjectInfo {
+    let available = false
+    try {
+      available = statSync(path).isDirectory()
+    } catch {
+      available = false
+    }
+    return {
+      path,
+      name: basename(path) || path,
+      available,
+      sessionCount: manager.list().filter((s) => s.cwd === path).length,
+    }
+  }
+
+  function historyRpcError(err: unknown): RpcError {
+    if (err instanceof HistoryError) {
+      const code =
+        err.code === 'not_found' ? ErrorCodes.NOT_FOUND : ErrorCodes.BAD_REQUEST
+      return new RpcError(code, err.message)
+    }
+    return new RpcError(ErrorCodes.INTERNAL, err instanceof Error ? err.message : String(err))
+  }
+
   async function handleMethod(conn: AuthedConnection, method: string, params: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case 'host.info':
@@ -205,10 +247,27 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
       case 'session.create': {
         const parsed = SessionCreateParams.safeParse(params)
         if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
-        const cwd = parsed.data.cwd && parsed.data.cwd.trim() !== '' ? parsed.data.cwd : process.cwd()
-        if (!existsSync(cwd) || !statSync(cwd).isDirectory()) {
-          throw new RpcError(ErrorCodes.BAD_REQUEST, `not a directory: ${cwd}`)
+        // No cwd given (or a blank one): fall back to the first registered
+        // AND existing project — the daemon's own cwd is only registered when
+        // the store was empty at startup, so it cannot be the fallback.
+        let rawCwd = parsed.data.cwd && parsed.data.cwd.trim() !== '' ? parsed.data.cwd : undefined
+        if (rawCwd === undefined) {
+          const available = store.listProjects().filter((p) => {
+            try {
+              return statSync(p).isDirectory()
+            } catch {
+              return false
+            }
+          })
+          if (available.length === 0) {
+            throw new RpcError(ErrorCodes.BAD_REQUEST, 'no registered project directory is available')
+          }
+          rawCwd = available[0]!
         }
+        if (!existsSync(rawCwd) || !statSync(rawCwd).isDirectory()) {
+          throw new RpcError(ErrorCodes.BAD_REQUEST, `not a directory: ${rawCwd}`)
+        }
+        const cwd = requireProjectDir(rawCwd)
         const session = manager.create({
           cwd,
           title: parsed.data.title,
@@ -216,6 +275,71 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
           permissionMode: parsed.data.permissionMode,
         })
         return { summary: session.summary() }
+      }
+
+      // ---- projects & session history (multi-project-history) ---------------
+
+      case 'projects.list':
+        return { projects: store.listProjects().map((p) => projectInfo(p)) }
+
+      case 'projects.register': {
+        const parsed = ProjectsRegisterParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        if (!existsSync(parsed.data.path) || !statSync(parsed.data.path).isDirectory()) {
+          throw new RpcError(ErrorCodes.BAD_REQUEST, `not a directory: ${parsed.data.path}`)
+        }
+        const canonical = store.addProject(parsed.data.path)
+        return { project: projectInfo(canonical) }
+      }
+
+      case 'sessions.discover': {
+        const parsed = SessionsDiscoverParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const cwd = requireProjectDir(parsed.data.cwd)
+        const managed = new Map<string, string>()
+        for (const summary of manager.list()) {
+          // both ids: after a fork the summary tracks the NEW claude session
+          // id, but the imported-from transcript must still show as managed
+          if (summary.claudeSessionId) managed.set(summary.claudeSessionId, summary.id)
+          if (summary.originClaudeSessionId) managed.set(summary.originClaudeSessionId, summary.id)
+        }
+        try {
+          return { sessions: await discoverSessions(cwd, managed) }
+        } catch (err) {
+          throw historyRpcError(err)
+        }
+      }
+
+      case 'session.history': {
+        const parsed = SessionHistoryParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const cwd = requireProjectDir(parsed.data.cwd)
+        try {
+          return await replayHistory(
+            parsed.data.claudeSessionId,
+            cwd,
+            parsed.data.beforeLine,
+            parsed.data.limit,
+          )
+        } catch (err) {
+          throw historyRpcError(err)
+        }
+      }
+
+      case 'session.import': {
+        const parsed = SessionImportParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const cwd = requireProjectDir(parsed.data.cwd)
+        try {
+          const session = await manager.importSession(
+            parsed.data.claudeSessionId,
+            cwd,
+            parsed.data.title,
+          )
+          return { summary: session.summary() }
+        } catch (err) {
+          throw historyRpcError(err)
+        }
       }
 
       case 'session.watch': {
