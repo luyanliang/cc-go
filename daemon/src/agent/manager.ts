@@ -10,16 +10,68 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { DaemonEvent, PermissionMode, SessionSummary } from '../protocol.js'
+import type { DaemonEvent, HostModelsResult, ModelInfoDto, PermissionMode, SessionSummary } from '../protocol.js'
 import type { Store } from '../store.js'
 import { collectHistory, titleFromHistory } from '../history.js'
-import { Session } from './session.js'
+import { Session, type SessionCallbacks } from './session.js'
 
 export class SessionManager {
   private sessions = new Map<string, Session>()
   private listeners = new Set<(event: DaemonEvent) => void>()
+  /** Host-level model catalog from the most recent session init (D4); null
+   *  until any query has initialized on a CLI that supports supportedModels(). */
+  private modelsCache: { models: ModelInfoDto[]; current: string | null } | null = null
+  /** Probe-session factory (host.models cold path); injectable for tests. */
+  probeSessionFactory: (cwd: string) => Session = (cwd) =>
+    new Session(
+      {
+        onEvent: () => {},
+        onSummary: () => {},
+        onModels: (models, current) => this.noteModels(models, current),
+      },
+      { cwd, title: 'model-probe' },
+    )
+
+  /** 空目录不缓存：保持"未确认支持"，让后续请求仍能走探测。 */
+  private noteModels(models: ModelInfoDto[], current: string | null): void {
+    if (models.length === 0) return
+    this.modelsCache = { models, current }
+  }
 
   constructor(private readonly store: Store) {}
+
+  /** Latest host-level model catalog, when known. */
+  get models(): { models: ModelInfoDto[]; current: string | null } | null {
+    return this.modelsCache
+  }
+
+  /**
+   * host.models 的三级降级链（D4）：init 缓存 → 活查询直取（限时）→
+   * 短命探测 → 空目录（旧 CLI）。空目录不进缓存——避免旧 CLI 的一次
+   * 空回调把目录永久钉死，升级后仍可经探测恢复。探测会话不进会话列表。
+   */
+  async hostModels(): Promise<HostModelsResult> {
+    if (this.modelsCache) return this.modelsCache
+    for (const session of this.sessions.values()) {
+      // 限时：卡死的 CLI 不能拖住整个 RPC（后面还有探测级兜底）。
+      const live = await Promise.race([
+        session.tryLiveModels().catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+      ])
+      if (live && live.models.length > 0) {
+        this.modelsCache = live
+        return live
+      }
+    }
+    const cwd = this.store.listSessions()[0]?.cwd ?? process.cwd()
+    const probe = this.probeSessionFactory(cwd)
+    const result = await probe.probeModels().catch(() => null)
+    if (result && result.models.length > 0) {
+      this.modelsCache = result
+      return result
+    }
+    return { models: [], current: result?.current ?? null }
+  }
 
   onEvent(listener: (event: DaemonEvent) => void): () => void {
     this.listeners.add(listener)
@@ -44,6 +96,21 @@ export class SessionManager {
     return this.sessions.get(id)
   }
 
+  /** Callbacks shared by every Session the manager creates. The session
+   *  reference is late-bound (created inside `new Session(...)`). */
+  private sessionCallbacks(get: () => Session): SessionCallbacks {
+    return {
+      onEvent: (event) => this.emit(event),
+      onSummary: () => {
+        this.store.upsertSession(get().summary())
+        this.emit({ type: 'sessions.changed' })
+      },
+      onModels: (models: ModelInfoDto[], current: string | null) => {
+        this.noteModels(models, current)
+      },
+    }
+  }
+
   create(opts: {
     cwd: string
     title?: string
@@ -51,16 +118,8 @@ export class SessionManager {
     permissionMode?: PermissionMode
     origin?: 'created' | 'imported'
   }): Session {
-    const session = new Session(
-      {
-        onEvent: (event) => this.emit(event),
-        onSummary: () => {
-          this.store.upsertSession(session.summary())
-          this.emit({ type: 'sessions.changed' })
-        },
-      },
-      opts,
-    )
+    let session!: Session
+    session = new Session(this.sessionCallbacks(() => session), opts)
     this.sessions.set(session.id, session)
     this.store.upsertSession(session.summary())
     this.emit({ type: 'sessions.changed' })
@@ -112,14 +171,9 @@ export class SessionManager {
    * Claude context survives via `resume: claudeSessionId`.
    */
   rehydrate(summary: SessionSummary): Session {
-    const session = new Session(
-      {
-        onEvent: (event) => this.emit(event),
-        onSummary: () => {
-          this.store.upsertSession(session.summary())
-          this.emit({ type: 'sessions.changed' })
-        },
-      },
+    let session!: Session
+    session = new Session(
+      this.sessionCallbacks(() => session),
       {
         id: summary.id,
         cwd: summary.cwd,

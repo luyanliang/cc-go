@@ -12,6 +12,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:cc_go/transport/host_link.dart';
 import 'package:cc_go/transport/reconnecting_link.dart';
 import 'package:cc_go/transport/tofu.dart';
+import 'theme/app_style.dart';
 
 class DebugEventsScreen extends StatefulWidget {
   const DebugEventsScreen({super.key});
@@ -28,9 +29,9 @@ class _DebugEventsScreenState extends State<DebugEventsScreen> {
   ReconnectingHostLink? _link;
   String _status = '未连接';
   Color get _statusColor => switch (_status) {
-        '已连接' => Colors.green,
-        '连接中…' => Colors.orange,
-        _ => Colors.grey,
+        '已连接' => AppColors.success,
+        '连接中…' => AppColors.warning,
+        _ => AppColors.neutral,
       };
   final _frames = <String>[];
   final _scrollController = ScrollController();
@@ -187,7 +188,7 @@ class _DebugEventsScreenState extends State<DebugEventsScreen> {
               itemCount: _frames.length,
               itemBuilder: (context, index) => Text(
                 _frames[index],
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                style: AppMono.dense,
               ),
             ),
           ),

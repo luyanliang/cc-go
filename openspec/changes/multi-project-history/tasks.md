@@ -47,4 +47,4 @@
 - [x] 7.7 合并重复的工具结果摘要器（session.ts 复用 history.ts `summarizeToolContent`，仅 max 参数差异）
 - [x] 7.8 `--project` 校验 isDirectory（拒绝把普通文件注册为项目）
 - [x] 7.9 e2e 脚本退出时从真实 ~/.cc-go/store.json 移除临时项目与 'e2e' 设备条目（可重复运行零残留，已实测验证）
-- [ ] 7.10 app 侧 `ProjectsNotifier` 与 `SessionsNotifier` 连接管道重复，抽取共享基类（重构类，不影响行为，随下个 app 变更一并做）
+- [x] 7.10 app 侧 `ProjectsNotifier` 与 `SessionsNotifier` 连接管道重复，抽取共享基类（重构类，不影响行为，随下个 app 变更一并做）—— 由 transcript-data-protocol 5.1 落地（LinkScopedListNotifier），既有测试全绿

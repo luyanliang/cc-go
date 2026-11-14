@@ -9,6 +9,7 @@ import '../state/host_entry.dart';
 import '../state/providers.dart';
 import '../transport/ssh/ssh_host_key.dart';
 import 'add_host_screen.dart';
+import 'theme/app_style.dart';
 
 class HostListScreen extends ConsumerWidget {
   const HostListScreen({super.key});
@@ -59,7 +60,7 @@ class HostListScreen extends ConsumerWidget {
                           if (entry.id == (activeId ?? list.first.id)) ...[
                             const SizedBox(width: 6),
                             const Icon(Icons.check_circle,
-                                size: 16, color: Colors.green),
+                                size: 16, color: AppColors.success),
                           ],
                         ],
                       ),

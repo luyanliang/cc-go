@@ -8,8 +8,13 @@ import 'package:material_ui/material_ui.dart';
 import '../../state/chat_controller.dart';
 import '../../state/chat_controller_provider.dart';
 import '../../state/session_models.dart';
+import '../../state/sessions.dart';
+import 'attachment_pick.dart';
 import 'chat_rows.dart';
 import 'composer.dart';
+import 'model_sheet.dart';
+import 'usage_chip.dart';
+import '../widgets/pill_badge.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key, required this.sessionId, required this.title});
@@ -99,9 +104,11 @@ class _ChatBodyState extends State<ChatBody> {
             builder: (context, _) => Composer(
               running: controller.running,
               busy: controller.busy,
-              onSend: (text) async {
+              pickAttachment: () => pickAttachmentWithSheet(context),
+              slashCommands: controller.slashCommands,
+              onSend: (text, attachments) async {
                 try {
-                  await controller.send(text);
+                  await controller.send(text, attachments: attachments);
                 } on Object catch (e) {
                   // 发送失败不让消息静默丢失：把原文带回提示里。
                   if (context.mounted) {
@@ -109,6 +116,8 @@ class _ChatBodyState extends State<ChatBody> {
                       SnackBar(content: Text('发送失败：$e\n消息：$text')),
                     );
                   }
+                  // 向 Composer 重新抛出：文本与附件保留在输入区。
+                  rethrow;
                 }
               },
               onCancel: () => controller.cancel(),
@@ -120,15 +129,73 @@ class _ChatBodyState extends State<ChatBody> {
 }
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
+  /// 已为其拉取过指令目录的 controller 实例。重连后 provider 会重建出
+  /// 新 controller（旧的 slashCommands 丢失）——按身份识别并重拉。
+  ChatController? _commandsLoadedFor;
+
   @override
   Widget build(BuildContext context) {
     final controller = ref.watch(chatControllerProvider(widget.sessionId));
+    if (!identical(_commandsLoadedFor, controller)) {
+      _commandsLoadedFor = controller;
+      Future.microtask(() => controller.loadSlashCommands());
+    }
+    // 用量/成本来自会话摘要（task 3.5）：sessions.changed 驱动列表刷新，
+    // 这里从会话列表 provider 里按 id 取最新摘要。
+    SessionSummary? summary;
+    final sessions = ref.watch(sessionsProvider).value;
+    if (sessions != null) {
+      for (final s in sessions) {
+        if (s.id == widget.sessionId) {
+          summary = s;
+          break;
+        }
+      }
+    }
     return Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.title, style: const TextStyle(fontSize: 17)),
+            Row(
+              children: [
+                Flexible(child: Text(widget.title, style: const TextStyle(fontSize: 17))),
+                if (summary case final s?) ...[
+                  const SizedBox(width: 6),
+                  // 模型 chip（task 4.3）：点开选择面板；当前模型为空时显示占位。
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => showModelSheet(
+                      context,
+                      loader: () async {
+                        final raw = await controller.models();
+                        final entries = <ModelEntry>[];
+                        for (final m in (raw['models'] as List<dynamic>? ?? <dynamic>[])) {
+                          if (m is! Map<String, dynamic>) continue;
+                          entries.add(ModelEntry(
+                            id: m['id'] as String? ?? '',
+                            displayName: m['displayName'] as String? ?? '',
+                          ));
+                        }
+                        return ModelCatalog(models: entries, current: raw['current'] as String?);
+                      },
+                      currentModel: s.model,
+                      onApply: (model) => controller.configureModel(model),
+                    ),
+                    child: PillBadge.tinted(
+                      s.model ?? '模型',
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      onColor: Theme.of(context).colorScheme.onSurface,
+                      icon: Icons.arrow_drop_down,
+                    ),
+                  ),
+                  if (s.usage case final usage?) ...[
+                    const SizedBox(width: 6),
+                    UsageChip(usage: usage),
+                  ],
+                ],
+              ],
+            ),
             Text(
               switch (controller.transcript.phase) {
                 SessionPhase.idle => '空闲',

@@ -10,9 +10,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/transcript.dart';
 import 'chat_row_model.dart';
+import 'image_viewer.dart';
 import 'render/assistant_markdown.dart';
 import 'render/copy_button.dart';
 import 'tool_views.dart';
+import '../theme/app_style.dart';
+import '../widgets/mono_block.dart';
 
 class TranscriptListView extends StatelessWidget {
   const TranscriptListView({
@@ -38,7 +41,7 @@ class TranscriptListView extends StatelessWidget {
     }
     if (items.isEmpty && queuedTexts.isEmpty) {
       return const Center(
-        child: Text('发送第一条消息开始', style: TextStyle(color: Colors.grey)),
+        child: Text('发送第一条消息开始', style: TextStyle(color: AppColors.neutral)),
       );
     }
     final rows = deriveChatRows(items: items, queuedTexts: queuedTexts);
@@ -125,7 +128,7 @@ class _PermissionCardState extends State<PermissionCard> {
         children: [
           Row(
             children: [
-              const Icon(Icons.lock_clock, color: Colors.amber, size: 18),
+              const Icon(Icons.lock_clock, color: AppColors.waiting, size: 18),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -137,17 +140,8 @@ class _PermissionCardState extends State<PermissionCard> {
           ),
           if (widget.item.toolInput != null && widget.item.toolInput!.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                const JsonEncoder.withIndent('  ').convert(widget.item.toolInput!),
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
+            MonoBlock.text(
+              const JsonEncoder.withIndent('  ').convert(widget.item.toolInput!),
             ),
           ],
           CheckboxListTile(
@@ -259,8 +253,42 @@ class _UserBubble extends StatelessWidget {
           color: scheme.primaryContainer,
           borderRadius: BorderRadius.circular(16),
         ),
-        // 可选中文本：长按拖选后经系统选择菜单复制（task 1.3）。
-        child: SelectableText(item.text),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // 可选中文本：长按拖选后经系统选择菜单复制（task 1.3）。
+            SelectableText(item.text),
+            // 附件缩略图（task 2.4）：点开全屏查看。
+            if (item.attachments.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                alignment: WrapAlignment.end,
+                children: [
+                  for (final attachment in item.attachments)
+                    GestureDetector(
+                      onTap: () => showAttachmentFullScreen(context, attachment),
+                      child: Container(
+                        width: 96,
+                        height: 96,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          color: scheme.surfaceContainerHighest,
+                        ),
+                        child: Image.memory(
+                          base64Decode(attachment.dataBase64),
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -348,31 +376,25 @@ class _ToolRow extends StatelessWidget {
     return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
   }
 
-  static const _statusLabel = {
-    'running': '运行中',
-    'awaiting-permission': '待授权',
-    'done': '完成',
-    'error': '出错',
-    'denied': '已拒绝',
-  };
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final (icon, color) = switch (item.status) {
-      'running' => (Icons.sync, Colors.blue),
-      'awaiting-permission' => (Icons.lock_clock, Colors.amber),
-      'done' => (Icons.check, Colors.green),
-      'denied' => (Icons.block, Colors.grey),
-      'error' => (Icons.error_outline, Colors.red),
-      _ => (Icons.build_circle_outlined, Colors.grey),
+    // 一张表：状态 → (标签, 语义, 字形)。新增状态只改这里；语义色一律
+    // 走 AppStatus，避免标签/语义/字形三处 switch 各自漂移。
+    final (label, status, icon) = switch (item.status) {
+      'running' => ('运行中', AppStatus.active, Icons.sync),
+      'awaiting-permission' => ('待授权', AppStatus.waiting, Icons.lock_clock),
+      'done' => ('完成', AppStatus.success, Icons.check_circle),
+      'denied' => ('已拒绝', AppStatus.neutral, Icons.block),
+      'error' => ('出错', AppStatus.error, Icons.error_outline),
+      _ => (item.status, AppStatus.neutral, Icons.build_circle_outlined),
     };
     return ExpansionTile(
       dense: true,
       visualDensity: VisualDensity.compact,
-      leading: Icon(icon, color: color, size: 20),
+      leading: Icon(icon, color: status.color, size: 20),
       title: Text(
-        '${item.toolName ?? "工具"} · ${_statusLabel[item.status] ?? item.status}',
+        '${item.toolName ?? "工具"} · $label',
         style: theme.textTheme.bodyMedium,
       ),
       subtitle: _subtitle(),
@@ -387,17 +409,8 @@ class _ToolRow extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text('输入', style: theme.textTheme.labelSmall),
             ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                const JsonEncoder.withIndent('  ').convert(item.toolInput!),
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
+            MonoBlock.text(
+              const JsonEncoder.withIndent('  ').convert(item.toolInput!),
             ),
           ],
           if (item.summary != null && item.summary!.isNotEmpty) ...[
@@ -408,6 +421,30 @@ class _ToolRow extends StatelessWidget {
             ),
             Text(item.summary!, style: theme.textTheme.bodySmall),
           ],
+        ],
+        // 结果图片（task 3.4）：所有工具类型统一在展开区尾部展示。
+        if (item.resultImages.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final image in item.resultImages)
+                GestureDetector(
+                  onTap: () => showAttachmentFullScreen(context, image),
+                  child: Container(
+                    width: 128,
+                    height: 128,
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: theme.colorScheme.surfaceContainerHighest,
+                    ),
+                    child: Image.memory(base64Decode(image.dataBase64), fit: BoxFit.cover),
+                  ),
+                ),
+            ],
+          ),
         ],
       ],
     );
@@ -422,9 +459,9 @@ class _NoticeBand extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (bg, fg) = switch (item.level) {
-      'warn' => (Colors.orange.withValues(alpha: 0.12), Colors.orange.shade900),
-      'error' => (Colors.red.withValues(alpha: 0.12), Colors.red.shade900),
-      _ => (Colors.grey.withValues(alpha: 0.12), Colors.grey.shade800),
+      'warn' => (AppColors.warning.withValues(alpha: 0.12), AppColors.warningOnTint),
+      'error' => (AppColors.error.withValues(alpha: 0.12), AppColors.errorOnTint),
+      _ => (AppColors.neutral.withValues(alpha: 0.12), AppColors.neutralOnTint),
     };
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

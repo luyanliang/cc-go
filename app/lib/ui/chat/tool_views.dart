@@ -6,7 +6,10 @@ library;
 import 'package:material_ui/material_ui.dart';
 
 import '../../state/transcript.dart';
+import 'render/ansi.dart';
 import 'render/diff.dart';
+import '../theme/app_style.dart';
+import '../widgets/mono_block.dart';
 
 /// 单工具展开内容视图的构建器；返回 null 表示"本条没有可画的内容"，
 /// 调用方回退通用展示。
@@ -69,29 +72,6 @@ String? _patternPath(TranscriptItem item, String patternKey) {
 // 通用小件
 // ---------------------------------------------------------------------------
 
-/// 等宽内容块（命令 / 路径等键值对）。
-class _MonoBlock extends StatelessWidget {
-  const _MonoBlock(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: SelectableText(
-        text,
-        style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      ),
-    );
-  }
-}
-
 /// 标签 + 值的紧凑行。
 class _FieldRow extends StatelessWidget {
   const _FieldRow(this.label, this.value);
@@ -135,16 +115,21 @@ class _SectionLabel extends StatelessWidget {
 // Bash
 // ---------------------------------------------------------------------------
 
-/// Bash：命令（等宽）+ 输出摘要。
+/// Bash：命令（等宽）+ 完整输出（ANSI 着色，纵向可滚，超高截断标记）。
+/// 无原始输出（旧数据）回退单行摘要。
 Widget buildBashToolView(TranscriptItem item) {
   final command = item.toolInput?['command'];
+  final output = item.resultText;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       const _SectionLabel('命令'),
-      _MonoBlock(command is String ? command : ''),
-      if (item.summary != null && item.summary!.isNotEmpty) ...[
-        const SizedBox(height: 6),
+      MonoBlock.text(command is String ? command : ''),
+      const SizedBox(height: 6),
+      if (output != null) ...[
+        const _SectionLabel('输出'),
+        _AnsiOutputView(text: output, truncated: item.resultTruncated),
+      ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('输出'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),
       ],
@@ -152,21 +137,64 @@ Widget buildBashToolView(TranscriptItem item) {
   );
 }
 
+/// ANSI 着色的完整输出块：等宽、纵向限高滚动；截断时尾部标记。
+/// Read/Bash/Grep 共用 —— Read 内容自带行号，原样进这里即可。
+class _AnsiOutputView extends StatelessWidget {
+  const _AnsiOutputView({required this.text, this.truncated = false});
+
+  final String text;
+  final bool truncated;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return MonoBlock(
+      constraints: const BoxConstraints(maxHeight: 320),
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText.rich(
+              TextSpan(
+                style: AppMono.denseLoose,
+                children: parseAnsiSpans(text),
+              ),
+            ),
+            if (truncated)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  '… 输出过长，已截断',
+                  style: theme.textTheme.labelSmall,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Read / Grep / Glob
 // ---------------------------------------------------------------------------
 
-/// Read：路径与读取窗口 + 内容摘要。
+/// Read：路径与读取窗口 + 完整内容。Claude Code 的 Read 结果本身就是
+/// `cat -n` 风格（自带行号），原样渲染——不自造第二层行号 gutter。
 Widget buildReadToolView(TranscriptItem item) {
   final input = item.toolInput ?? const {};
+  final result = item.resultText;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if (input['file_path'] is String) _FieldRow('路径', input['file_path'] as String),
       if (input['offset'] != null) _FieldRow('起始行', '${input['offset']}'),
       if (input['limit'] != null) _FieldRow('行数', '${input['limit']}'),
-      if (item.summary != null && item.summary!.isNotEmpty) ...[
-        const SizedBox(height: 4),
+      const SizedBox(height: 4),
+      if (result != null) ...[
+        const _SectionLabel('内容'),
+        _AnsiOutputView(text: result, truncated: item.resultTruncated),
+      ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('内容'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),
       ],
@@ -174,17 +202,21 @@ Widget buildReadToolView(TranscriptItem item) {
   );
 }
 
-/// Grep：模式与范围 + 命中摘要。
+/// Grep：模式与范围 + 完整命中内容（ANSI 容错渲染，旧数据回退摘要）。
 Widget buildGrepToolView(TranscriptItem item) {
   final input = item.toolInput ?? const {};
+  final result = item.resultText;
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       if (input['pattern'] is String) _FieldRow('模式', input['pattern'] as String),
       if (input['path'] is String) _FieldRow('范围', input['path'] as String),
       if (input['output_mode'] is String) _FieldRow('输出', input['output_mode'] as String),
-      if (item.summary != null && item.summary!.isNotEmpty) ...[
-        const SizedBox(height: 4),
+      const SizedBox(height: 4),
+      if (result != null) ...[
+        const _SectionLabel('命中'),
+        _AnsiOutputView(text: result, truncated: item.resultTruncated),
+      ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('命中'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),
       ],
@@ -227,13 +259,7 @@ class DiffView extends StatelessWidget {
     final shown = lines.length > kDiffViewMaxLines ? lines.sublist(0, kDiffViewMaxLines) : lines;
     final adds = lines.where((l) => l.kind == DiffLineKind.add).length;
     final removes = lines.where((l) => l.kind == DiffLineKind.remove).length;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(8),
-      ),
+    return MonoBlock(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -242,12 +268,10 @@ class DiffView extends StatelessWidget {
           for (final line in shown)
             Text(
               '${line.kind == DiffLineKind.add ? '+' : line.kind == DiffLineKind.remove ? '−' : ' '} ${line.text}',
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
+              style: AppMono.dense.copyWith(
                 color: switch (line.kind) {
-                  DiffLineKind.add => Colors.green.shade800,
-                  DiffLineKind.remove => Colors.red.shade800,
+                  DiffLineKind.add => AppColors.successOnTint,
+                  DiffLineKind.remove => AppColors.errorOnTint,
                   DiffLineKind.same => Theme.of(context).colorScheme.onSurfaceVariant,
                 },
               ),
@@ -312,7 +336,7 @@ Widget buildWriteToolView(TranscriptItem item) {
           padding: EdgeInsets.only(top: 4),
           child: Text(
             '… 内容超长，仅显示前 200 行',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+            style: TextStyle(fontSize: 11, color: AppColors.neutral),
           ),
         ),
     ],
@@ -336,9 +360,9 @@ Widget? buildTodoToolView(TranscriptItem item) {
     if (content is! String) continue;
     final status = raw['status'];
     final (icon, color) = switch (status) {
-      'completed' => (Icons.check_circle, Colors.green),
-      'in_progress' => (Icons.play_circle, Colors.blue),
-      _ => (Icons.radio_button_unchecked, Colors.grey),
+      'completed' => AppStatus.success.visual,
+      'in_progress' => AppStatus.active.visual,
+      _ => (Icons.radio_button_unchecked, AppColors.neutral),
     };
     rows.add(Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),

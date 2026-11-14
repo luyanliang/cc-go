@@ -19,12 +19,15 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import type {
   AssistantItem,
+  Attachment,
   DiscoveredSession,
   Item,
   SessionHistoryResult,
   ToolItem,
+  ToolResultImage,
   UserItem,
 } from './protocol.js'
+import { ImageMimeType } from './protocol.js'
 
 // ---------------------------------------------------------------------------
 // Errors (mapped to RpcError codes by server.ts)
@@ -116,6 +119,8 @@ interface ContentBlock {
   tool_use_id?: string
   content?: unknown
   is_error?: boolean
+  /** image block (user attachments & tool results) */
+  source?: { type?: string; media_type?: string; data?: string }
 }
 
 /**
@@ -170,6 +175,7 @@ export class TranscriptMapper {
         }
       } else if (Array.isArray(content)) {
         const texts: string[] = []
+        const attachments: Attachment[] = []
         for (const block of content as ContentBlock[]) {
           if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '') {
             texts.push(block.text)
@@ -178,18 +184,33 @@ export class TranscriptMapper {
             if (tool) {
               tool.status = block.is_error ? 'error' : 'done'
               tool.summary = summarizeResult(block.content)
+              Object.assign(tool, extractToolResult(block.content))
               this.pendingTools.delete(block.tool_use_id)
+            }
+          } else if (block?.type === 'image' && block.source?.type === 'base64') {
+            // 用户随消息发的图片（或回放里的等价块）→ 附件回显。mime 需
+            // 落在协议枚举内（Messages API 接受的子集），其他照旧跳过。
+            const mime = ImageMimeType.safeParse(block.source.media_type)
+            if (
+              mime.success &&
+              typeof block.source.data === 'string' &&
+              block.source.data.length <= TOOL_RESULT_IMAGE_BYTES &&
+              attachments.length < 4
+            ) {
+              attachments.push({ name: 'image', mimeType: mime.data, dataBase64: block.source.data })
             }
           }
         }
-        if (texts.length > 0) {
-          produced.push({
+        if (texts.length > 0 || attachments.length > 0) {
+          const userItem: UserItem = {
             kind: 'user',
             id: idFor(entry.uuid, 'u'),
             text: texts.join(''),
             source: 'daemon',
             createdAt,
-          })
+          }
+          if (attachments.length > 0) userItem.attachments = attachments
+          produced.push(userItem)
         }
       }
     } else if (entry.type === 'assistant') {
@@ -341,6 +362,56 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function summarizeResult(content: unknown, max = 200): string | undefined {
   return summarizeToolContent(content, max)
+}
+
+// ---- tool raw result extraction (transcript-data-protocol D2) ---------------
+
+export const TOOL_RESULT_TEXT_CAP = 20_000
+export const TOOL_RESULT_IMAGE_MAX = 2
+export const TOOL_RESULT_IMAGE_BYTES = 1_000_000
+
+export interface ExtractedToolResult {
+  resultText?: string
+  resultTruncated?: boolean
+  resultImages?: ToolResultImage[]
+}
+
+/**
+ * Extract the raw result of a tool call (full text with newlines + bounded
+ * images) from a tool_result block's content. Shared by the live SDK stream
+ * (session.ts) and history replay so both transcript surfaces carry the same
+ * fields. Content shapes vary (string | block array); anything unrecognized
+ * yields no fields — callers fall back to the summary.
+ */
+export function extractToolResult(content: unknown): ExtractedToolResult {
+  if (typeof content === 'string') {
+    return textResult(content)
+  }
+  if (!Array.isArray(content)) return {}
+  const blocks = content as ContentBlock[]
+  const texts = blocks
+    .filter((b) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+  const images: ToolResultImage[] = []
+  for (const block of blocks) {
+    if (block?.type !== 'image') continue
+    const source = block.source
+    if (source?.type !== 'base64') continue
+    if (typeof source.media_type !== 'string' || typeof source.data !== 'string') continue
+    if (source.data.length > TOOL_RESULT_IMAGE_BYTES) continue
+    images.push({ mimeType: source.media_type, dataBase64: source.data })
+    if (images.length >= TOOL_RESULT_IMAGE_MAX) break
+  }
+  const result: ExtractedToolResult = {}
+  if (texts.length > 0) Object.assign(result, textResult(texts.join('\n')))
+  if (images.length > 0) result.resultImages = images
+  return result
+}
+
+function textResult(text: string): ExtractedToolResult {
+  if (text === '') return {}
+  if (text.length <= TOOL_RESULT_TEXT_CAP) return { resultText: text }
+  return { resultText: text.slice(0, TOOL_RESULT_TEXT_CAP), resultTruncated: true }
 }
 
 /** Shared tool-result summarizer — the live SDK stream (session.ts) and the
