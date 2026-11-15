@@ -44,11 +44,15 @@ import {
   SessionImportParams,
   SessionPromptParams,
   SessionsDiscoverParams,
+  SpeechCatalogResult,
+  SpeechTranscribeParams,
+  SpeechTranscribeResult,
   type DaemonEvent,
   type HostInfo,
   type ProjectInfo,
 } from './protocol.js'
 import { HistoryError, discoverSessions, replayHistory } from './history.js'
+import { SpeechError, speechCatalog, speechTranscribe } from './speech.js'
 import type { Store } from './store.js'
 import type { SessionManager } from './agent/manager.js'
 import { startDiscovery, type DiscoveryHandle } from './discovery.js'
@@ -67,6 +71,8 @@ export interface DaemonOptions {
   version: string
   /** TLS material; omit only with the explicit --no-tls dev flag (loopback only). */
   tls?: { cert: string; key: string; fingerprint: string }
+  /** Transcription provider; omit = speech endpoints report "not configured". */
+  speech?: import('./speech.js').SpeechProviderConfig
 }
 
 const PAIRING_ATTEMPT_LIMIT = 10
@@ -421,6 +427,27 @@ export function startDaemon(manager: SessionManager, store: Store, opts: DaemonO
         const ok = manager.dispose(sessionId)
         if (!ok) throw new RpcError(ErrorCodes.NOT_FOUND, 'session not found')
         return {}
+      }
+
+      // ---- speech transcription (voice-dictation) -------------------------
+
+      case 'speech.catalog': {
+        const catalog = speechCatalog(opts.speech)
+        const parsed = SpeechCatalogResult.safeParse(catalog)
+        if (!parsed.success) throw new RpcError(ErrorCodes.INTERNAL, parsed.error.message)
+        return parsed.data
+      }
+
+      case 'speech.transcribe': {
+        const parsed = SpeechTranscribeParams.safeParse(params)
+        if (!parsed.success) throw new RpcError(ErrorCodes.BAD_REQUEST, parsed.error.message)
+        const text = await speechTranscribe(opts.speech, parsed.data.audio, {
+          providerId: parsed.data.providerId,
+          language: parsed.data.language,
+        })
+        const result = SpeechTranscribeResult.safeParse({ text })
+        if (!result.success) throw new RpcError(ErrorCodes.INTERNAL, result.error.message)
+        return result.data
       }
 
       default:

@@ -344,6 +344,36 @@ export const SessionCommandsResult = z.object({
 })
 export type SessionCommandsResult = z.infer<typeof SessionCommandsResult>
 
+// ---- Speech transcription (voice-dictation) -------------------------------
+
+export const SpeechCatalogResult = z.object({
+  providers: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      location: z.literal('host-local'),
+      languages: z.array(z.string()),
+      usable: z.boolean(),
+    }),
+  ),
+  providerId: z.string().nullable(),
+  language: z.string(),
+  maxAudioBytes: z.number().int().positive(),
+  maxDurationSeconds: z.number().int().positive(),
+})
+export type SpeechCatalogResult = z.infer<typeof SpeechCatalogResult>
+
+export const SpeechTranscribeParams = z.object({
+  /** One 16kHz mono PCM16 WAV, base64-encoded. */
+  audio: z.string().min(1),
+  providerId: z.string().optional(),
+  language: z.string().optional(),
+})
+export type SpeechTranscribeParams = z.infer<typeof SpeechTranscribeParams>
+
+export const SpeechTranscribeResult = z.object({ text: z.string() })
+export type SpeechTranscribeResult = z.infer<typeof SpeechTranscribeResult>
+
 /** Error codes used across the wire. */
 export const ErrorCodes = {
   UNAUTHORIZED: 'unauthorized',
@@ -352,4 +382,9 @@ export const ErrorCodes = {
   BAD_REQUEST: 'bad_request',
   BUSY: 'busy',
   INTERNAL: 'internal',
+  // Speech transcription (voice-dictation).
+  SPEECH_NOT_CONFIGURED: 'speech_not_configured',
+  SPEECH_AUDIO_TOO_LARGE: 'speech_audio_too_large',
+  SPEECH_PROVIDER_UNAVAILABLE: 'speech_provider_unavailable',
+  SPEECH_TRANSCRIBE_FAILED: 'speech_transcribe_failed',
 } as const

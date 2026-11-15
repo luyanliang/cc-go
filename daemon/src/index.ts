@@ -22,15 +22,33 @@ import { Store } from './store.js'
 import { SessionManager } from './agent/manager.js'
 import { startDaemon } from './server.js'
 import { ensureTlsMaterial } from './tls.js'
+import { parseSpeechArgs } from './speech.js'
 
 const VERSION = '0.1.0'
 
-function parseArgs(argv: string[]): { port: number; localhost: boolean; noTls: boolean; name?: string; code?: string; projects: string[] } {
-  const args: { port: number; localhost: boolean; noTls: boolean; name?: string; code?: string; projects: string[] } = {
+function parseArgs(argv: string[]): {
+  port: number
+  localhost: boolean
+  noTls: boolean
+  name?: string
+  code?: string
+  projects: string[]
+  speech: Parameters<typeof parseSpeechArgs>[0]
+} {
+  const args: {
+    port: number
+    localhost: boolean
+    noTls: boolean
+    name?: string
+    code?: string
+    projects: string[]
+    speech: Parameters<typeof parseSpeechArgs>[0]
+  } = {
     port: 8747,
     localhost: false,
     noTls: false,
     projects: [],
+    speech: {},
   }
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i]
@@ -55,6 +73,21 @@ function parseArgs(argv: string[]): { port: number; localhost: boolean; noTls: b
       }
       args.projects.push(next)
       i++
+    } else if (arg === '--speech-provider') {
+      args.speech.speechProvider = next
+      i++
+    } else if (arg === '--speech-model') {
+      args.speech.speechModel = next
+      i++
+    } else if (arg === '--speech-api-key-file') {
+      args.speech.speechApiKeyFile = next
+      i++
+    } else if (arg === '--speech-base-url') {
+      args.speech.speechBaseUrl = next
+      i++
+    } else if (arg === '--speech-language') {
+      args.speech.speechLanguage = next
+      i++
     } else if (arg === '--help' || arg === '-h') {
       console.log('cc-go daemon — remote-control Claude Code from your phone\n')
       console.log('  --port, -p <n>     WebSocket port (default 8747)')
@@ -64,6 +97,15 @@ function parseArgs(argv: string[]): { port: number; localhost: boolean; noTls: b
       console.log('  --no-tls           plaintext dev mode (forces loopback binding)')
       console.log('  --project <dir>    register a project directory (repeatable);')
       console.log('                     with none registered, the startup dir is used')
+      console.log('  --speech-provider <openai>')
+      console.log('                     enable phone voice dictation via a daemon-side')
+      console.log('                     transcription provider (OpenAI-compatible);')
+      console.log('                     off by default — audio never leaves this machine')
+      console.log('                     unless configured')
+      console.log('  --speech-model <id>        transcription model (e.g. whisper-1)')
+      console.log('  --speech-api-key-file <f>  file holding the provider API key')
+      console.log('  --speech-base-url <url>    provider base URL (default OpenAI)')
+      console.log('  --speech-language <bcp47>  recognition hint (default: zh)')
       process.exit(0)
     } else {
       console.error(`unknown argument: ${arg}`)
@@ -101,6 +143,7 @@ async function main(): Promise<void> {
     pairingCode,
     version: VERSION,
     tls,
+    speech: parseSpeechArgs(args.speech),
   })
 
   const shutdown = (sig: NodeJS.Signals): void => {

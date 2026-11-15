@@ -5,7 +5,10 @@
     <!-- 第 8 节：前台服务保活 + 本地通知 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- 语音听写（chat-composer）：speech_to_text 系统识别引擎需要。 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <!-- 第 5 节：扫码配对（相机）+ mDNS 发现（组播锁） -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>

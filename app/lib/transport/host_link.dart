@@ -14,6 +14,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:io';
 
 // ---------------------------------------------------------------------------
@@ -338,5 +339,28 @@ class HostLink implements HostLinkBase {
       _router.failAll(HostLinkClosed('$reason (code ${code ?? '?'})'));
     }
     _events.close();
+  }
+}
+
+/// 语音目录与转录 RPC（voice-dictation）：`speech.catalog` / `speech.transcribe`。
+extension VoiceRpc on HostLinkBase {
+  /// daemon 的转录服务目录；未配置时 providers 为空列表（不是错误）。
+  Future<Map<String, dynamic>> speechCatalog() async {
+    final result = await call('speech.catalog') as Map<dynamic, dynamic>;
+    return result.cast<String, dynamic>();
+  }
+
+  /// 上传一段 16kHz mono PCM16 WAV，返回转录文本。
+  Future<String> speechTranscribe(
+    Uint8List wav, {
+    String? providerId,
+    String? language,
+  }) async {
+    final result = await call('speech.transcribe', {
+      'audio': base64Encode(wav),
+      'providerId': ?providerId,
+      'language': ?language,
+    }) as Map<dynamic, dynamic>;
+    return result['text'] as String? ?? '';
   }
 }
