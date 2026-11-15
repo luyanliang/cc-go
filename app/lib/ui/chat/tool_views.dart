@@ -5,11 +5,13 @@ library;
 
 import 'package:material_ui/material_ui.dart';
 
+
 import '../../state/transcript.dart';
 import 'render/ansi.dart';
 import 'render/diff.dart';
 import '../theme/app_style.dart';
 import '../widgets/mono_block.dart';
+import 'output_page.dart';
 
 /// 单工具展开内容视图的构建器；返回 null 表示"本条没有可画的内容"，
 /// 调用方回退通用展示。
@@ -128,7 +130,11 @@ Widget buildBashToolView(TranscriptItem item) {
       const SizedBox(height: 6),
       if (output != null) ...[
         const _SectionLabel('输出'),
-        _AnsiOutputView(text: output, truncated: item.resultTruncated),
+        _AnsiOutputView(
+                  text: output,
+                  truncated: item.resultTruncated,
+                  title: 'Bash',
+                  subtitle: toolSubtitleFor(item) ?? '',),
       ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('输出'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),
@@ -137,40 +143,128 @@ Widget buildBashToolView(TranscriptItem item) {
   );
 }
 
-/// ANSI 着色的完整输出块：等宽、纵向限高滚动；截断时尾部标记。
-/// Read/Bash/Grep 共用 —— Read 内容自带行号，原样进这里即可。
+/// 单行输出判长阈值：超过则详情只排头尾摘要，全文进 [ToolOutputPage]
+/// （chat-transcript-rows：长输出只排头尾 + 全文页入口）。
+const _kLongOutputChars = 2000;
+const _kHeadLines = 30;
+const _kTailLines = 10;
+
+/// ANSI 着色的输出块：等宽；短输出纵向限高滚动，长输出排头尾摘要 +
+/// 全文页入口；截断时尾部标记。Read/Bash/Grep 共用 —— Read 内容自带
+/// 行号，原样进这里即可。
 class _AnsiOutputView extends StatelessWidget {
-  const _AnsiOutputView({required this.text, this.truncated = false});
+  const _AnsiOutputView({
+    required this.text,
+    required this.title,
+    this.subtitle = '',
+    this.truncated = false,
+  });
 
   final String text;
+
+  /// 全文页标题（工具名）与副题（命令/路径概览）。
+  final String title;
+  final String subtitle;
   final bool truncated;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return MonoBlock(
-      constraints: const BoxConstraints(maxHeight: 320),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SelectableText.rich(
-              TextSpan(
-                style: AppMono.denseLoose,
-                children: parseAnsiSpans(text),
+    final long = text.length > _kLongOutputChars;
+    final body = long ? _headTail(context) : SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SelectableText.rich(
+            TextSpan(
+              style: AppMono.denseLoose,
+              children: parseAnsiSpans(text),
+            ),
+          ),
+          if (truncated)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '… 输出过长，已截断',
+                style: theme.textTheme.labelSmall,
               ),
             ),
-            if (truncated)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  '… 输出过长，已截断',
-                  style: theme.textTheme.labelSmall,
+        ],
+      ),
+    );
+    return MonoBlock(
+      constraints: BoxConstraints(maxHeight: long ? double.infinity : 320),
+      child: body,
+    );
+  }
+
+  /// 长输出：头 N 行 + 尾 M 行 + 行数统计 + 全文页入口。
+  Widget _headTail(BuildContext context) {
+    final theme = Theme.of(context);
+    final lines = text.split('\n');
+    final total = lines.length;
+    final head = lines.take(_kHeadLines);
+    final tail = total > _kHeadLines + _kTailLines
+        ? lines.skip(total - _kTailLines)
+        : const <String>[];
+    final omitted = total - head.length - tail.length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectableText.rich(
+          TextSpan(
+            style: AppMono.denseLoose,
+            children: parseAnsiSpans(head.join('\n')),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(
+                '… 中间省略 $omitted 行（共 $total 行）',
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+              InkWell(
+                onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => ToolOutputPage(
+                    title: title,
+                    subtitle: subtitle,
+                    text: text,
+                    truncated: truncated,
+                  ),
+                )),
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('查看全文',
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: theme.colorScheme.primary)),
+                      const SizedBox(width: 2),
+                      Icon(Icons.chevron_right,
+                          size: 14, color: theme.colorScheme.primary),
+                    ],
+                  ),
                 ),
               ),
-          ],
+            ],
+          ),
         ),
-      ),
+        if (tail.isNotEmpty)
+          SelectableText.rich(
+            TextSpan(
+              style: AppMono.denseLoose,
+              children: parseAnsiSpans(tail.join('\n')),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -193,7 +287,11 @@ Widget buildReadToolView(TranscriptItem item) {
       const SizedBox(height: 4),
       if (result != null) ...[
         const _SectionLabel('内容'),
-        _AnsiOutputView(text: result, truncated: item.resultTruncated),
+        _AnsiOutputView(
+                  text: result,
+                  truncated: item.resultTruncated,
+                  title: 'Read',
+                  subtitle: toolSubtitleFor(item) ?? '',),
       ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('内容'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),
@@ -215,7 +313,11 @@ Widget buildGrepToolView(TranscriptItem item) {
       const SizedBox(height: 4),
       if (result != null) ...[
         const _SectionLabel('命中'),
-        _AnsiOutputView(text: result, truncated: item.resultTruncated),
+        _AnsiOutputView(
+                  text: result,
+                  truncated: item.resultTruncated,
+                  title: 'Grep',
+                  subtitle: toolSubtitleFor(item) ?? '',),
       ] else if (item.summary != null && item.summary!.isNotEmpty) ...[
         const _SectionLabel('命中'),
         Text(item.summary!, style: const TextStyle(fontSize: 12)),

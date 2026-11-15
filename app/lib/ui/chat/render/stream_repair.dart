@@ -8,7 +8,75 @@ library;
 
 /// 补全流式残缺的 Markdown 文本。
 String repairStreamingMarkdown(String text) {
-  return _repairTableTail(_closeOpenCodeFence(text));
+  var repaired = _repairTableTail(_closeOpenCodeFence(text));
+  repaired = _closeUnclosedEmphasis(repaired);
+  repaired = _closeUnclosedLink(repaired);
+  return repaired;
+}
+
+/// 在围栏外扫描 `**` 记号：奇数个未闭合 → 追加闭合符。
+/// 逐行单遍（O(全文长度)）：`_fencePattern` 的 `$` 在非 multiline 下
+/// 只匹配串尾，此前对"每个行首做 substring+正则"的写法永远检不出中
+/// 部围栏，还会把代码块里的 `**` 计入——两案一并修。
+/// 幂等：闭合后记号成对，再跑不追加。
+String _closeUnclosedEmphasis(String text) {
+  final lines = text.split('\n');
+  var inFence = false;
+  String? fence;
+  var count = 0;
+  for (final line in lines) {
+    final m = _fencePattern.firstMatch(line);
+    if (m != null) {
+      final f = m.group(1)!;
+      final info = m.group(2) ?? '';
+      // 开栏：反引号围栏的信息串里不允许再出现反引号（GFM）。
+      final opens = f.contains('`') ? !info.contains('`') : true;
+      if (opens) {
+        if (!inFence) {
+          inFence = true;
+          fence = f;
+        } else if (f[0] == fence![0] && f.length >= fence.length) {
+          inFence = false;
+          fence = null;
+        }
+        continue;
+      }
+    }
+    if (inFence) continue;
+    // 数本行的 ** 记号（跳过转义对）。
+    var i = 0;
+    while (i < line.length) {
+      if (line[i] == '\\') {
+        i += 2;
+        continue;
+      }
+      if (line[i] == '*' && i + 1 < line.length && line[i + 1] == '*') {
+        count++;
+        i += 2;
+        continue;
+      }
+      i++;
+    }
+  }
+  if (count % 2 == 0) return text;
+  // 奇数个 ** 记号：闭合粗体。
+  return '$text**';
+}
+
+/// 半截链接/图片 `[text](url` → 补右括号；`[text`（无 `](`）不猜。
+String _closeUnclosedLink(String text) {
+  if (text.isEmpty) return text;
+  // 从尾部找未闭合的 `[...](...`：最后一个 [ 之后有 ]( 却没有 )。
+  final openBracket = text.lastIndexOf('[');
+  if (openBracket < 0) return text;
+  // 图片 `![alt](…` 的头截断更复杂，不猜（`[` 前一个字符是 `!`）。
+  if (openBracket > 0 && text[openBracket - 1] == '!') return text;
+  final after = text.substring(openBracket);
+  final parenIdx = after.indexOf('](');
+  if (parenIdx < 0) return text; // 还在 alt 文本里，等下文
+  final rest = after.substring(parenIdx + 2);
+  if (rest.contains(')')) return text;
+  return '$text)';
 }
 
 /// 围栏行：行首至多 3 个空格 + 3 个及以上 ` 或 ~。

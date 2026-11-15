@@ -36,8 +36,10 @@ Widget harness(TranscriptItem item) => MaterialApp(
       ),
     );
 
+/// 新解剖：行标题 = 工具名（状态在尾部标签），点标题即展开。
 Future<void> expand(WidgetTester tester, String title) async {
-  await tester.tap(find.textContaining(title));
+  final name = title.split(' · ').first;
+  await tester.tap(find.text(name).first);
   await tester.pumpAndSettle();
 }
 
@@ -135,8 +137,8 @@ void main() {
     expect(find.text('调研方案'), findsOneWidget);
     expect(find.text('写实现'), findsOneWidget);
     expect(find.text('补测试'), findsOneWidget);
-    // 工具行 done 与 todo completed 统一为同一字形（AppStatus.success）。
-    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    // 工具行 done 行尾安静（dsh 状态条规格），只剩 todo completed 图标。
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
     // in_progress 用 AppStatus.active 的统一字形（与会话列表 running 一致）。
     expect(find.byIcon(Icons.play_circle_outline), findsOneWidget);
     expect(find.byIcon(Icons.radio_button_unchecked), findsOneWidget);

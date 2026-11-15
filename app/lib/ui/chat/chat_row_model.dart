@@ -22,9 +22,13 @@ class UserRow extends ChatRow {
 }
 
 class AssistantRow extends ChatRow {
-  const AssistantRow(this.item);
+  const AssistantRow(this.item, {this.turnEnd = false});
 
   final TranscriptItem item;
+
+  /// 回合末（转录最后一条已完成回答）—— 消息操作行挂这里
+  /// （chat-message-interactions）。流式中恒为 false。
+  final bool turnEnd;
 
   @override
   String get key => item.id;
@@ -100,6 +104,43 @@ class TurnFoldRow extends ChatRow {
 
   int get messageCount =>
       process.where((t) => t.kind == ItemKind.assistant && t.text.trim().isNotEmpty).length;
+
+  /// 工具调用按名称归类计数（脚注摘要展开用），保持首次出现顺序。
+  List<(String, int)> get toolBreakdown {
+    final order = <String>[];
+    final counts = <String, int>{};
+    for (final t in process) {
+      if (t.kind != ItemKind.tool) continue;
+      final name = t.toolName ?? '工具';
+      if (!counts.containsKey(name)) order.add(name);
+      counts[name] = (counts[name] ?? 0) + 1;
+    }
+    return [
+      for (final n in order) (n, counts[n]!),
+    ];
+  }
+}
+
+/// 回合脚注（chat-transcript-rows）：正常完成的回合在其最终回答下方
+/// 一行"耗时 · 步数"。tokens/成本逐轮不可得（summary 是累计值），按
+/// spec 的降级规则省略。
+class FootnoteRow extends ChatRow {
+  const FootnoteRow(this.fold);
+
+  final TurnFoldRow fold;
+
+  @override
+  String get key => 'fn${fold.process.first.id}';
+
+  /// 回合耗时（秒）；createdAt 缺失时为 null。
+  int? get seconds {
+    if (fold.process.isEmpty) return null;
+    final start = fold.process.first.createdAt;
+    final end = fold.finalAnswer.createdAt;
+    final diff = end.difference(start).inMilliseconds;
+    return diff < 0 ? null : (diff / 1000).round();
+  }
+
 }
 
 /// 回合折叠判定（design D4，从严）：一段 = 两条用户消息之间的条目。
@@ -145,6 +186,40 @@ TurnFoldRow? assessTurnFold(List<TranscriptItem> segment) {
 }
 
 const toolGroupThreshold = 3;
+
+/// 活动胶囊的当前动作摘要（chat-transcript-rows）：从转录条目推导
+/// —— 正在运行的工具优先（工具名 · 概览），否则流式中的助手消息为
+/// "生成中"。空闲返回 null。纯函数。
+String? currentActivityLabel(
+  List<TranscriptItem> items, {
+  String? Function(TranscriptItem)? toolOverview,
+}) {
+  for (final item in items.reversed) {
+    if (item.kind == ItemKind.tool && item.status == 'running') {
+      final overview = toolOverview?.call(item) ?? item.summary ?? '';
+      final name = item.toolName ?? '工具';
+      return overview.isEmpty ? name : '$name · $overview';
+    }
+  }
+  for (final item in items.reversed) {
+    if (item.kind == ItemKind.assistant &&
+        (item.status == 'streaming' || item.isStreamingAssistant)) {
+      return '生成中';
+    }
+  }
+  return null;
+}
+
+/// 活动已进行时长（秒，取运行条目 createdAt 到 now）；不可得返回 null。
+int? activityElapsedSeconds(List<TranscriptItem> items, DateTime now) {
+  for (final item in items.reversed) {
+    if (item.kind == ItemKind.tool && item.status == 'running') {
+      final diff = now.difference(item.createdAt).inMilliseconds;
+      return diff < 0 ? 0 : (diff / 1000).round();
+    }
+  }
+  return null;
+}
 
 /// 条目列表 → 行列表。行序即条目序；回合按用户消息分段，可折叠的段
 /// （assessTurnFold）收成 TurnFoldRow + 最终回答；不可折叠的段内连续
@@ -201,6 +276,7 @@ List<ChatRow> deriveChatRows({
     if (fold != null) {
       rows.add(fold);
       rows.add(AssistantRow(fold.finalAnswer));
+      rows.add(FootnoteRow(fold));
     } else {
       emitFlat(segment);
     }
@@ -216,6 +292,17 @@ List<ChatRow> deriveChatRows({
     }
   }
   emitSegment();
+  // 回合末标记：转录最后一条（排队行/脚注行之前）已完成回答挂操作行。
+  // 脚注行必须跳过——它紧跟最终回答，不跳的话扫描首行就撞它 break，
+  // 折叠轮的操作行永远挂不上（评审 #2）。
+  for (var i = rows.length - 1; i >= 0; i--) {
+    final r = rows[i];
+    if (r is QueuedRow || r is FootnoteRow) continue;
+    if (r is AssistantRow && r.item.status == 'done') {
+      rows[i] = AssistantRow(r.item, turnEnd: true);
+    }
+    break;
+  }
   for (var i = 0; i < queuedTexts.length; i++) {
     rows.add(QueuedRow(index: i, text: queuedTexts[i]));
   }

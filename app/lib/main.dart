@@ -2,6 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'state/providers.dart';
+import 'theme/motion.dart';
+import 'theme/tokens.dart';
 import 'ui/lifecycle_host.dart';
 import 'ui/pair_screen.dart';
 import 'ui/session_list_screen.dart';
@@ -19,7 +21,26 @@ class CcGoApp extends StatelessWidget {
       child: MaterialApp(
         title: 'cc-go',
         navigatorKey: rootNavigatorKey,
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo)),
+        // 雾蓝玻璃主题（调色板 + 玻璃/动效 token，见 lib/theme/）。
+        theme: CcTheme.light(),
+        darkTheme: CcTheme.dark(),
+        // 页面竖向渐变（mist/night Top→Bottom）全局铺底；BackdropGroup：
+        // 互不重叠的玻璃件（grouped: true）共享一次背景采样；
+        // AppMotionScope：灵动档动效分级（树上没有即标准档）。
+        builder: (context, child) {
+          final tokens = Theme.of(context).extension<CcTokens>();
+          return AppMotionScope(
+            fluid: true,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: tokens?.pageGradient ?? const LinearGradient(
+                  colors: [Color(0xFFEBF1FE), Color(0xFFF6F7FC)],
+                ),
+              ),
+              child: BackdropGroup(child: child ?? const SizedBox.shrink()),
+            ),
+          );
+        },
         home: const RootGate(),
       ),
     );

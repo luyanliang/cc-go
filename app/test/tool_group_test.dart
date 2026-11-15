@@ -41,14 +41,14 @@ void main() {
     // 展开列出组内每次调用。
     await tester.tap(find.text('工具调用 × 3'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Bash · 完成'), findsOneWidget);
-    expect(find.textContaining('Read · 完成'), findsOneWidget);
-    expect(find.textContaining('Edit · 完成'), findsOneWidget);
+    expect(find.text('Bash'), findsOneWidget);
+    expect(find.text('Read'), findsOneWidget);
+    expect(find.text('Edit'), findsOneWidget);
   });
 
   testWidgets('不足 3 次不成分组行', (tester) async {
     await tester.pumpWidget(harness([tool('t1', 'Bash'), tool('t2', 'Read')]));
     expect(find.text('工具调用 × 2'), findsNothing);
-    expect(find.textContaining('Bash · 完成'), findsOneWidget);
+    expect(find.text('Bash'), findsOneWidget);
   });
 }

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; background: #ffffff; }
+  #container { padding: 12px; }
+  .error { color: #b3261e; font-family: monospace; font-size: 13px; white-space: pre-wrap; padding: 12px; }
+</style>
+<script src="./mermaid.min.js"></script>
+</head>
+<body>
+<div id="container"></div>
+<script>
+  // securityLevel: strict（design D6 备注：不信任图内脚本/链接）。
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
+  // App 侧经 postMessage 注入代码；渲染成功 → 无回执（页面即结果），
+  // 失败 → 显示原始错误文本（App 侧超时兜底同效果）。
+  document.addEventListener('message', function (event) {
+    var code = event.data;
+    var container = document.getElementById('container');
+    container.innerHTML = '';
+    try {
+      mermaid.render('m' + Date.now(), code).then(function (result) {
+        container.innerHTML = result.svg;
+      }).catch(function (e) {
+        container.innerHTML = '<div class="error">' +
+          String(e).replace(/[<>&]/g, function (c) {
+            return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c];
+          }) + '</div>';
+      });
+    } catch (e) {
+      container.innerHTML = '<div class="error">' + e + '</div>';
+    }
+  });
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ import 'package:cc_go/notify/app_notifier.dart';
 import 'package:cc_go/notify/foreground_link.dart';
 import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
+import 'package:cc_go/ui/chat/empty_state.dart';
 import 'package:cc_go/state/app_link_provider.dart';
 import 'package:cc_go/state/host_entry.dart';
 import 'package:cc_go/state/providers.dart';
@@ -195,7 +196,7 @@ void main() {
 
     await tester.tap(find.text('手机里建的'));
     await tester.pumpAndSettle();
-    expect(find.text('发送第一条消息开始'), findsOneWidget,
+    expect(find.byType(ChatEmptyState), findsOneWidget,
         reason: '已托管会话进入正常聊天页（空转录）');
   });
 
@@ -295,7 +296,7 @@ void main() {
     expect(importCall.$2?['title'], '终端会话', reason: '标题随会话延续');
 
     expect(find.byType(TextField), findsOneWidget, reason: '接管后进入正常聊天页');
-    expect(find.text('发送第一条消息开始'), findsOneWidget);
+    expect(find.byType(ChatEmptyState), findsOneWidget);
     expect(find.text('只读历史'), findsNothing, reason: '只读页被替换');
   });
 }

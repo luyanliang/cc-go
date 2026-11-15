@@ -59,10 +59,15 @@ void main() {
         .setMockMethodCallHandler(SystemChannels.platform, null);
   });
 
-  testWidgets('用户气泡为可选中文本', (tester) async {
+  testWidgets('用户气泡：长按菜单 → 选择文字（SelectionArea）', (tester) async {
     await tester.pumpWidget(harness([userItem('帮我看看这个问题')]));
-    expect(find.byType(SelectableText), findsOneWidget);
-    expect(find.widgetWithText(SelectableText, '帮我看看这个问题'), findsOneWidget);
+    // 选择文字走菜单对话框（SelectableText 会吞掉气泡长按手势）。
+    await tester.longPress(find.text('帮我看看这个问题'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选择文字'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SelectionArea), findsOneWidget);
+    expect(find.textContaining('帮我看看这个问题'), findsWidgets);
   });
 
   testWidgets('助手消息复制按钮把 Markdown 原文写入剪贴板', (tester) async {

@@ -33,7 +33,8 @@ Widget harness(TranscriptItem item, Future<void> Function(String, bool, bool) on
 void main() {
   testWidgets('awaiting-permission 工具条目渲染为权限卡片（7.1）', (tester) async {
     await tester.pumpWidget(harness(toolItem('awaiting-permission'), (id, a, f) async {}));
-    expect(find.text('请求权限：Write'), findsOneWidget);
+    expect(find.text('允许运行这个工具？'), findsOneWidget);
+    expect(find.text('Write'), findsWidgets);
     expect(find.textContaining('/tmp/perm/a.txt'), findsOneWidget,
         reason: '等宽参数展示');
     expect(find.text('允许'), findsOneWidget);
@@ -68,9 +69,12 @@ void main() {
   testWidgets('应答后状态翻转 → 卡片消失，回到工具行（7.2）', (tester) async {
     await tester.pumpWidget(harness(toolItem('running'), (id, a, f) async {}));
     expect(find.text('请求权限：Write'), findsNothing, reason: '卡片消失');
-    expect(find.text('Write · 运行中'), findsOneWidget);
+    expect(find.text('Write'), findsOneWidget);
+    // 运行中：行尾状态条为 spinner（dsh 规格，不再有文字标签）。
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
     await tester.pumpWidget(harness(toolItem('denied'), (id, a, f) async {}));
-    expect(find.text('Write · 已拒绝'), findsOneWidget);
+    expect(find.text('Write'), findsOneWidget);
+    expect(find.text('已拒绝'), findsOneWidget);
   });
 }

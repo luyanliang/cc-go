@@ -50,6 +50,7 @@ void main() {
   });
 
   Future<void> pumpBody(WidgetTester tester) {
+    tester.view.devicePixelRatio = 1.0;
     return tester.pumpWidget(
       MaterialApp(home: Scaffold(body: ChatBody(controller: controller))),
     );
@@ -71,7 +72,7 @@ void main() {
   }
 
   ScrollPosition positionOf(WidgetTester tester) =>
-      tester.widget<ListView>(find.byType(ListView)).controller!.position;
+      tester.widget<CustomScrollView>(find.byType(CustomScrollView)).controller!.position;
 
   testWidgets('流式输出时贴底自动滚动（回归：外层 build 不重跑导致不滚）', (tester) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -82,7 +83,11 @@ void main() {
 
     final longText = List.filled(60, '很长的一行输出内容，用来撑出可滚动区域。').join('\n');
     await emitAssistant(tester, 'a1', longText, 'streaming');
-    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    // pacer 首帧只放积压上限、后续按帧增量吐字（tick 增量语义），且光标
+    // 常驻呼吸不能 pumpAndSettle —— 用多帧 pump 吐完 + 贴底滚动落位。
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
 
     final position = positionOf(tester);
     expect(position.maxScrollExtent, greaterThan(0), reason: '内容确实超出视口');
@@ -90,7 +95,8 @@ void main() {
         reason: '首条长内容应自动贴底');
 
     await emitAssistant(tester, 'a2', longText, 'streaming');
-    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 200));
     final position2 = positionOf(tester);
     expect(position2.pixels, greaterThan(position2.maxScrollExtent - 200),
         reason: '后续流式条目继续贴底');
@@ -105,16 +111,22 @@ void main() {
 
     final longText = List.filled(60, '很长的一行输出内容，用来撑出可滚动区域。').join('\n');
     await emitAssistant(tester, 'a1', longText, 'streaming');
-    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    // pacer 首帧只放积压上限、后续按帧增量吐字（tick 增量语义），且光标
+    // 常驻呼吸不能 pumpAndSettle —— 用多帧 pump 吐完 + 贴底滚动落位。
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
     expect(positionOf(tester).pixels,
         greaterThan(positionOf(tester).maxScrollExtent - 200));
 
     // 用户上翻离开底部
-    await tester.drag(find.byType(ListView), const Offset(0, 400));
-    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 400));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     await emitAssistant(tester, 'a2', longText, 'streaming');
-    await tester.pumpAndSettle(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 200));
     final position = positionOf(tester);
     expect(position.pixels, lessThan(position.maxScrollExtent - 200),
         reason: '用户在上方阅读时不强制贴底');

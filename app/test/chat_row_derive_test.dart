@@ -161,6 +161,7 @@ void main() {
         ('u1', UserRow),
         ('tpm1', TurnFoldRow),
         ('a1', AssistantRow),
+        ('fnm1', FootnoteRow),
       ]);
       final fold = rows[1] as TurnFoldRow;
       expect(fold.toolCount, 2);
@@ -236,6 +237,7 @@ void main() {
         ('u1', UserRow),
         ('tpt1', TurnFoldRow),
         ('a1', AssistantRow),
+        ('fnt1', FootnoteRow),
         ('u2', UserRow),
         ('t2', ToolRow),
         ('a2', AssistantRow),

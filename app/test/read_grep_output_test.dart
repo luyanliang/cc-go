@@ -34,8 +34,10 @@ Widget harness(TranscriptItem item) => MaterialApp(
       ),
     );
 
+/// 新解剖：行标题 = 工具名（状态在尾部标签），点标题即展开。
 Future<void> expand(WidgetTester tester, String title) async {
-  await tester.tap(find.textContaining(title));
+  final name = title.split(' · ').first;
+  await tester.tap(find.text(name).first);
   await tester.pumpAndSettle();
 }
 

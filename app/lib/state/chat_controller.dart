@@ -4,6 +4,8 @@ library;
 
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
+
 import 'attachment.dart';
 import 'session_models.dart';
 import 'transcript.dart';
@@ -48,9 +50,43 @@ class ChatController {
 
   bool get running => _transcript.phase == SessionPhase.running;
 
+  /// 外部填入草稿的通道（空态建议卡片、引用追问等）：Composer 监听并
+  /// 取走文本；null 表示无待填内容。
+  final ValueNotifier<String?> draftFill = ValueNotifier<String?>(null);
+
+  /// 请求把 [text] 填进输入框（不直接发送）。
+  void fillDraft(String text) => draftFill.value = text;
+
+  /// 引用追问的引文（chat-message-interactions）：非 null 时输入区显示
+  /// 引用胶囊，随下一次发送以 blockquote 前缀并入并清除。
+  final ValueNotifier<String?> quoteText = ValueNotifier<String?>(null);
+
+  void setQuote(String text) => quoteText.value = text;
+
+  void clearQuote() => quoteText.value = null;
+
+  /// 撤回排队消息（仅未送出条目；已送出的不在队列里）。
+  void removeQueuedAt(int index) {
+    if (index < 0 || index >= _queued.length) return;
+    _queued.removeAt(index);
+    _notify();
+  }
+
+  /// 编辑排队消息后重发（替换队列原文）。
+  void editQueuedAt(int index, String text) {
+    if (index < 0 || index >= _queued.length) return;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return;
+    final old = _queued[index];
+    _queued[index] = _QueuedSend(trimmed, old.wire);
+    _notify();
+  }
+
   void dispose() {
     unawaited(_eventsSub?.cancel());
     unawaited(_changes.close());
+    draftFill.dispose();
+    quoteText.dispose();
   }
 
   void _notify() {
@@ -189,7 +225,23 @@ class ChatController {
       'allow': allow,
       'allowToolForSession': allowToolForSession,
     });
+    // 免问成功 → 客户端记录（自动允许胶囊的状态展示；撤销需 daemon
+    // 撤销协议，不在本 change 范围——见 proposal 不做清单）。
+    if (allow && allowToolForSession) {
+      final item = _transcript.items
+          .where((i) => i.id == itemId && i.kind == ItemKind.tool)
+          .firstOrNull;
+      final tool = item?.toolName;
+      if (tool != null && tool.isNotEmpty && !_sessionAllowedTools.contains(tool)) {
+        _sessionAllowedTools.add(tool);
+        _notify();
+      }
+    }
   }
+
+  /// 本会话已勾选免问的工具类别（客户端镜像，仅作状态展示）。
+  final Set<String> _sessionAllowedTools = {};
+  Set<String> get sessionAllowedTools => Set.unmodifiable(_sessionAllowedTools);
 
   /// 清空本地排队显示（打断后 daemon 丢弃队列，快照不会含它们）。
   void clearQueued() {

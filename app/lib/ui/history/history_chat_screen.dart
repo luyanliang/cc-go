@@ -12,6 +12,7 @@ import '../../state/history_controller_provider.dart';
 import '../../state/history_controller.dart';
 import '../../state/sessions.dart';
 import '../chat/chat_rows.dart';
+import '../widgets/glass.dart';
 import '../chat/chat_screen.dart';
 
 class HistoryChatScreen extends ConsumerStatefulWidget {
@@ -212,24 +213,22 @@ class _ReadOnlyBar extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
         child: Row(
           children: [
+            // 同规格玻璃胶囊（chat-transcript-rows: 只读条）—— 与聊天页
+            // 输入条同一 chrome 层级，明确"此会话不可输入"。
             Expanded(
-              child: Container(
+              child: SizedBox(
                 height: 44,
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                alignment: Alignment.centerLeft,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.lock_outline,
-                        size: 16, color: theme.hintColor),
-                    const SizedBox(width: 8),
-                    Text('只读历史，接管后可继续对话',
-                        style: TextStyle(color: theme.hintColor, fontSize: 13)),
-                  ],
+                child: GlassPill(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      Icon(Icons.lock_outline,
+                          size: 16, color: theme.hintColor),
+                      const SizedBox(width: 8),
+                      Text('只读历史，接管后可继续对话',
+                          style: TextStyle(color: theme.hintColor, fontSize: 13)),
+                    ],
+                  ),
                 ),
               ),
             ),

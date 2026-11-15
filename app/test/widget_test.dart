@@ -9,6 +9,8 @@ import 'package:cc_go/notify/app_notifier.dart';
 import 'package:cc_go/notify/foreground_link.dart';
 import 'package:cc_go/notify/notification_policy.dart';
 import 'package:cc_go/state/app_link.dart';
+import 'package:cc_go/ui/chat/empty_state.dart';
+import 'package:cc_go/ui/theme/app_style.dart';
 import 'package:cc_go/state/app_link_provider.dart';
 import 'package:cc_go/state/host_entry.dart';
 import 'package:cc_go/state/providers.dart';
@@ -211,13 +213,13 @@ void main() {
       find.descendant(of: find.byWidget(sessionTiles.first), matching: find.text('要写文件')),
       findsOneWidget,
     );
-    // 金色徽标存在
+    // 待权限徽标（语义 waiting 色，AppColors.waiting）
     expect(
       tester.widget<Icon>(find.descendant(
         of: find.byWidget(sessionTiles.first),
         matching: find.byIcon(Icons.lock_clock),
       )).color,
-      Colors.amber,
+      AppColors.waiting,
     );
   });
 
@@ -262,7 +264,7 @@ void main() {
     expect(createCall.$2?['cwd'], '/tmp/ccgo-test',
         reason: '仅一个可用项目：直接在该目录创建（multi-project-history 4.3）');
     expect(find.text('新会话 1'), findsOneWidget, reason: '列表即时合入');
-    expect(find.text('发送第一条消息开始'), findsOneWidget, reason: '导航到空转录聊天页');
+    expect(find.byType(ChatEmptyState), findsOneWidget, reason: '导航到空转录聊天页');
   });
 
   testWidgets('忘记主机：清凭据回到配对屏', (tester) async {

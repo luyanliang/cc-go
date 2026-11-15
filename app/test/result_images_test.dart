@@ -49,7 +49,7 @@ void main() {
 
   testWidgets('结果图片在展开区渲染，点开全屏', (tester) async {
     await tester.pumpWidget(harness(toolWithImages(1)));
-    await tester.tap(find.textContaining('Read · 完成'));
+    await tester.tap(find.text('Read').first);
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsOneWidget);
 
@@ -60,7 +60,7 @@ void main() {
 
   testWidgets('多张结果图片全部渲染', (tester) async {
     await tester.pumpWidget(harness(toolWithImages(2)));
-    await tester.tap(find.textContaining('Read · 完成'));
+    await tester.tap(find.text('Read').first);
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsNWidgets(2));
   });
@@ -75,7 +75,7 @@ void main() {
       'input': {'file_path': '/tmp/a.dart'},
       'summary': '文本结果',
     })));
-    await tester.tap(find.textContaining('Read · 完成'));
+    await tester.tap(find.text('Read').first);
     await tester.pumpAndSettle();
     expect(find.byType(Image), findsNothing);
     expect(tester.takeException(), isNull);

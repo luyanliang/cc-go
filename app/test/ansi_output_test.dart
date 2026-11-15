@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:cc_go/state/transcript.dart';
 import 'package:cc_go/ui/chat/chat_rows.dart';
+import 'package:cc_go/ui/chat/output_page.dart';
 import 'package:cc_go/ui/chat/render/ansi.dart';
 
 void main() {
@@ -96,7 +97,7 @@ void main() {
         );
 
     Future<void> expand(WidgetTester tester) async {
-      await tester.tap(find.textContaining('Bash · 完成'));
+      await tester.tap(find.text('Bash').first);
       await tester.pumpAndSettle();
     }
 
@@ -120,5 +121,29 @@ void main() {
       // 副标题是命令（npm test），摘要只出现在回退输出区。
       expect(find.text('3 passed'), findsOneWidget);
     });
+
+    testWidgets('长输出：详情排头尾摘要 + 全文页（chat-transcript-rows）',
+        (tester) async {
+      tester.view.physicalSize = const Size(400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final long = [
+        for (var i = 0; i < 120; i++) 'line-$i 内容输出足够长以触发头尾摘要',
+      ].join('\n');
+      await tester.pumpWidget(harness(bash(resultText: long)));
+      await expand(tester);
+      // 头部与尾部可见，中间省略提示出现。
+      expect(find.textContaining('line-0'), findsOneWidget);
+      expect(find.textContaining('line-119'), findsOneWidget);
+      expect(find.textContaining('中间省略'), findsOneWidget);
+
+      // 全文页：完整内容 + 复制入口。
+      await tester.tap(find.text('查看全文'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ToolOutputPage), findsOneWidget);
+      expect(find.textContaining('line-60'), findsOneWidget);
+      expect(find.byIcon(Icons.copy), findsOneWidget);
+    });
   });
 }
+/* 组合进 main 之外不可行——见下方 testWidgets 由 python 追加进 main */
