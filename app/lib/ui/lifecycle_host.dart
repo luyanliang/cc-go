@@ -9,6 +9,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../notify/app_notifier.dart';
 import '../notify/foreground_link.dart';
@@ -31,13 +32,16 @@ class LifecycleHost extends ConsumerStatefulWidget {
   ConsumerState<LifecycleHost> createState() => _LifecycleHostState();
 }
 
+/// 电池豁免引导"已跳过"的持久化键：一旦点过跳过（或已豁免），之后所有
+/// 进程生命周期都不再弹 —— 之前是内存变量，进程被杀重启就再弹一次。
+const _kBatterySkipKey = 'battery.prompt.skipped';
+
 class _LifecycleHostState extends ConsumerState<LifecycleHost>
     with WidgetsBindingObserver {
   final _policy = NotificationPolicy();
   StreamSubscription<DaemonEvent>? _eventsSub;
   StreamSubscription<LinkState>? _stateSub;
   StreamSubscription<String>? _tapSub;
-  var _batteryPrompted = false;
   Object? _wiredLinkIdentity;
 
   @override
@@ -75,9 +79,8 @@ class _LifecycleHostState extends ConsumerState<LifecycleHost>
       // network-kicks design D3：UI 层只递事件，消费在 AppLink/链接层）。
       ref.read(appLinkProvider).value?.kicks.resume();
     }
-    if (state == AppLifecycleState.paused && !_batteryPrompted) {
-      _batteryPrompted = true;
-      _promptBatteryOptimization();
+    if (state == AppLifecycleState.paused) {
+      unawaited(_maybePromptBatteryOptimization());
     }
   }
 
@@ -90,15 +93,29 @@ class _LifecycleHostState extends ConsumerState<LifecycleHost>
     ));
   }
 
-  Future<void> _promptBatteryOptimization() async {
-    // 厂商 ROM 杀后台引导（8.4）：可跳过；一旦点过不再打扰。
+  /// 电池豁免引导（8.4，对齐 dsh-Go 的克制策略）：
+  /// 1. 已豁免（isIgnoringBatteryOptimizations）→ 永不弹；
+  /// 2. 用户点过「跳过」→ 持久化，之后所有进程生命周期都不再弹；
+  /// 3. 「去设置」直接弹系统豁免确认框（少一步；无该 Action 回退列表页）。
+  Future<void> _maybePromptBatteryOptimization() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool(_kBatterySkipKey) ?? false) return;
+    bool exempt;
+    try {
+      exempt = await const MethodChannel('cc_go/android')
+              .invokeMethod<bool>('isBatteryExempt') ??
+          true;
+    } on PlatformException {
+      return; // 查不到状态就不打扰。
+    }
+    if (exempt || !mounted) return;
     final go = await showDialog<bool>(
       context: rootNavigatorKey.currentContext!,
       builder: (context) => AlertDialog(
         title: const Text('提高后台存活'),
         content: const Text(
-          '为让锁屏后仍能收到权限与轮次通知，建议在系统设置中允许 cc-go'
-          ' 忽略电池优化（各家 ROM 路径略有差异）。',
+          '为让锁屏后仍能收到权限与轮次通知，建议允许 cc-go 忽略电池优化'
+          '（华为等厂商 ROM 还有各自的启动管理开关，路径略有差异）。',
         ),
         actions: [
           TextButton(
@@ -115,11 +132,14 @@ class _LifecycleHostState extends ConsumerState<LifecycleHost>
     if (go == true) {
       try {
         await const MethodChannel('cc_go/android')
-            .invokeMethod<void>('openIgnoreBatteryOptimizations');
+            .invokeMethod<void>('requestIgnoreBatteryOptimizations');
       } on PlatformException {
         // 无该 Action 的 ROM 直接吞掉；用户可自行去设置。
       }
     }
+    // 无论选哪个都持久化：引导对每个安装最多弹一次，绝不循环打扰
+    // （豁免与否由系统状态决定，未豁免时锁屏后收不到通知是 ROM 行为）。
+    await prefs.setBool(_kBatterySkipKey, true);
   }
 
   @override
