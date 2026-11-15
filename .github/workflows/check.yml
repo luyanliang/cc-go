@@ -26,3 +26,17 @@ jobs:
           cache: true
       - run: npm install --global @fission-ai/openspec@1.13.1
       - run: bash scripts/check.sh --setup
+
+  # 凭据形状扫描（gitleaks）：push/PR 引入的提交里出现 token/私钥/API key 形状
+  # 的内容即红叉。GITHUB_TOKEN 由 Actions 每次运行自动签发，无需配置 secret。
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
