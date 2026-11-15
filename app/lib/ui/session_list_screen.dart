@@ -8,6 +8,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../state/host_entry.dart';
+import '../voice/voice_controller.dart';
+import '../voice/voice_settings_sheet.dart';
 import '../state/project_models.dart';
 import '../state/projects.dart';
 import '../state/providers.dart';
@@ -50,6 +52,11 @@ class _SessionListScreenState extends ConsumerState<SessionListScreen> {
           PopupMenuButton<String>(
             onSelected: (value) async {
               switch (value) {
+                case 'voice':
+                  final selected = await showVoiceSettingsSheet(context);
+                  if (selected != null) {
+                    await VoiceInputController.saveMode(selected);
+                  }
                 case 'debug':
                   Navigator.of(context).push(MaterialPageRoute<void>(
                     builder: (_) => const DebugEventsScreen(),
@@ -76,6 +83,7 @@ class _SessionListScreenState extends ConsumerState<SessionListScreen> {
               }
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'voice', child: Text('语音输入')),
               PopupMenuItem(value: 'hosts', child: Text('主机管理')),
               PopupMenuItem(value: 'debug', child: Text('原始事件调试')),
               PopupMenuItem(value: 'forget', child: Text('忘记主机')),
